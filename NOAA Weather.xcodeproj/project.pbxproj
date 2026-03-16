@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		2324906A2F67B5DB00B5A9C7 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = 232490692F67B5DB00B5A9C7 /* SwiftSoup */; };
+		2324906C2F67B5DB00B5A9C7 /* SwiftSoupProfile in Frameworks */ = {isa = PBXBuildFile; productRef = 2324906B2F67B5DB00B5A9C7 /* SwiftSoupProfile */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		2397FDAC2F676BDA0064D57F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +57,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2324906A2F67B5DB00B5A9C7 /* SwiftSoup in Frameworks */,
+				2324906C2F67B5DB00B5A9C7 /* SwiftSoupProfile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +119,8 @@
 			);
 			name = "NOAA Weather";
 			packageProductDependencies = (
+				232490692F67B5DB00B5A9C7 /* SwiftSoup */,
+				2324906B2F67B5DB00B5A9C7 /* SwiftSoupProfile */,
 			);
 			productName = "NOAA Weather";
 			productReference = 2397FD9E2F676BD80064D57F /* NOAA Weather.app */;
@@ -195,6 +204,9 @@
 			);
 			mainGroup = 2397FD952F676BD80064D57F;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				232490682F67B5DB00B5A9C7 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2397FD9F2F676BD80064D57F /* Products */;
 			projectDirPath = "";
@@ -400,17 +412,20 @@
 				DEVELOPMENT_TEAM = PQW4KRLW78;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "NOAA-Weather-Info.plist";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show your local weather.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.playbackTest.NOAA-Weather";
+				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.NOAA-Weather.WeatherApp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -432,17 +447,20 @@
 				DEVELOPMENT_TEAM = PQW4KRLW78;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "NOAA-Weather-Info.plist";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show your local weather.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.playbackTest.NOAA-Weather";
+				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.NOAA-Weather.WeatherApp";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -578,6 +596,30 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		232490682F67B5DB00B5A9C7 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.13.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		232490692F67B5DB00B5A9C7 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 232490682F67B5DB00B5A9C7 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
+		};
+		2324906B2F67B5DB00B5A9C7 /* SwiftSoupProfile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 232490682F67B5DB00B5A9C7 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoupProfile;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2397FD962F676BD80064D57F /* Project object */;
 }
