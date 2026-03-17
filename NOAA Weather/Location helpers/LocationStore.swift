@@ -20,17 +20,13 @@ struct SavedLocation: Identifiable, Codable, Equatable {
     }
 }
 
+// LocationStore.swift
+
 @Observable
 @MainActor
 final class LocationStore {
-
-    // Index 0: current GPS — not persisted.
-    // Indices 1+: saved — persisted.
     private(set) var saved: [SavedLocation] = []
-
-    // Name shown on the current-location page (updated by WeatherViewModel via geocode)
     var currentLocationName: String = "My Location"
-
     private let key = "savedLocations"
 
     init() { load() }
@@ -46,14 +42,12 @@ final class LocationStore {
         persist()
     }
 
-    /// Remove a saved location by index within `saved` (not the page index).
-    func remove(id: UUID) {
-        saved.removeAll { $0.id == id }
+    func delete(_ location: SavedLocation) {
+        saved.removeAll { $0.id == location.id }
         persist()
     }
 
     // MARK: - Persistence
-
     private func persist() {
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: key)

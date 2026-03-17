@@ -1,12 +1,11 @@
-//
-//  WeatherViewModel.swift
-//  NOAA Weather
-
 import Foundation
 import CoreLocation
+import Observation
+import MapKit
 
 enum WeatherBackground {
     case sun, clouds, rain, snow
+    
     static func from(code: Int) -> WeatherBackground {
         switch code {
         case 71...77, 85, 86:           return .snow
@@ -15,6 +14,7 @@ enum WeatherBackground {
         default:                        return .sun
         }
     }
+    
     var videoName: String {
         switch self {
         case .sun: return "sun"; case .clouds: return "clouds"
@@ -26,189 +26,111 @@ enum WeatherBackground {
 @Observable
 @MainActor
 final class WeatherViewModel {
+    // Current State
     var current: CurrentConditions?
-    var hourly: [HourlyForecast] = []
     var daily: [DailyForecast] = []
+    var hourly: [HourlyForecast] = []
+    var sunEvent: SunEvent?
+    
+    // UI Metadata
     var locationName: String = ""
     var background: WeatherBackground = .sun
-    var dailyHigh: Double?
-    var dailyLow: Double?
     var isLoading = false
     var errorMessage: String?
-    var sunEvent: SunEvent?
+    
+    // Scaling for Charts
     var globalLow: Double = 0
     var globalHigh: Double = 100
+    var dailyHigh: Double? { daily.first?.high }
+    var dailyLow: Double? { daily.first?.low }
 
     private var lastFetchedCoordinate: CLLocationCoordinate2D?
-    private var lastCoord: CLLocationCoordinate2D?
 
-    /// Force a fresh fetch regardless of the dedup guard.
-    /// Preserves the current locationName so geocoding doesn't re-run (and can't cancel).
-    func refresh(coordinate: CLLocationCoordinate2D) async {
-        lastFetchedCoordinate = nil
-        // Detach from the caller's task so SwiftUI's refreshable cancellation
-        // doesn't propagate into our network requests.
-        await Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.load(coordinate: coordinate, skipGeocode: true)
-        }.value
-    }
-
-    /// Override the display name (used for ski resorts / saved locations with known names).
-    func setLocationName(_ name: String) {
-        locationName = name
-    }
-
+    /// Main entry point for the UI to request data
     func load(coordinate: CLLocationCoordinate2D, skipGeocode: Bool = false) async {
+        // 1. Dedup logic: Don't re-fetch if we are within ~1km of the last fetch
         if let last = lastFetchedCoordinate,
-           abs(last.latitude  - coordinate.latitude)  < 0.01,
+           abs(last.latitude - coordinate.latitude) < 0.01,
            abs(last.longitude - coordinate.longitude) < 0.01 { return }
+        
         lastFetchedCoordinate = coordinate
         isLoading = true
         errorMessage = nil
 
-        // Reverse geocode only on first load and only if no override name is set
-        if !skipGeocode && locationName.isEmpty {
-            if let placemarks = try? await CLGeocoder().reverseGeocodeLocation(
-                CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)),
-               let place = placemarks.first {
-                locationName = [place.locality, place.administrativeArea]
-                    .compactMap { $0 }.joined(separator: ", ")
+        // 2. Geocoding (City Name)
+        if !skipGeocode {
+            // 1. Run the MapKit search
+            await updateLocationName(for: coordinate)
+            
+            if self.locationName.isEmpty {
+                self.locationName = "Unknown location"
             }
         }
 
         do {
-            let lat = coordinate.latitude
-            let lon = coordinate.longitude
-
-            // Fetch Open-Meteo and NOAA webpage concurrently; NOAA is best-effort
-            async let omFetch    = OpenMeteoClient.shared.fetch(lat: lat, lon: lon)
-            async let noaaFetch  = NOAAWebScraper.shared.fetch(lat: lat, lon: lon)
-
-            let om = try await omFetch
-            let noaaData = (try? await noaaFetch) ?? [:]
-
-            let offset = om.utcOffsetSeconds
-            var cal = Calendar(identifier: .gregorian)
-            cal.timeZone = TimeZone(secondsFromGMT: offset) ?? .current
-
-            // ── Current ──────────────────────────────────────────────
-            let c = om.current
-            current = CurrentConditions(
-                temperature: c.temperature2m,
-                description: wmoDescription(code: c.weatherCode, isDay: c.isDay == 1),
-                windSpeed: c.windSpeed10m,
-                windGusts: c.windGusts10m,
-                windDirection: c.windDirection10m,
-                windDirectionLabel: compassDirection(from: c.windDirection10m),
-                humidity: c.relativeHumidity2m,
-                weatherCode: c.weatherCode
+            // 3. Use our new Orchestrator to get everything at once
+            let (cur, days, sun) = try await WeatherRepository.shared.fetchAll(
+                lat: coordinate.latitude,
+                lon: coordinate.longitude
             )
-            background = WeatherBackground.from(code: c.weatherCode)
 
-            // ── Hourly (next 12) ──────────────────────────────────────
-            let now = Date()
-            let h = om.hourly
-            var allHourly: [HourlyForecast] = []
-            for i in 0..<h.time.count {
-                let t = parseOMDate(h.time[i], utcOffset: offset)
-                guard t >= now.addingTimeInterval(-3600) else { continue }
-                allHourly.append(HourlyForecast(
-                    time: t,
-                    temperature: h.temperature2m[i],
-                    weatherCode: h.weatherCode[i],
-                    precipitationProbability: h.precipitationProbability[i]
-                ))
+            // 4. Update Properties
+            self.current = cur
+            self.daily = days
+            self.sunEvent = sun
+            self.background = WeatherBackground.from(code: cur.weatherCode)
+            
+            // Prepare Hourly slice (next 12 hours)
+            if let firstDay = days.first {
+                self.hourly = Array(firstDay.hourlyTemps.prefix(12))
             }
-            hourly = Array(allHourly.prefix(12))
-
-            // Group all hourly by local day key for graphs
-            let hourlyByDay = Dictionary(grouping: allHourly) { dayKey(for: $0.time, cal: cal) }
-
-            // ── Daily (today + 9 more = 10 days) ─────────────────────
-            let d = om.daily
-            var days: [DailyForecast] = []
-
-            for i in 0..<d.time.count {
-                let dayDate = parseOMDay(d.time[i], utcOffset: offset)
-
-                // Skip any days before today (Open-Meteo always starts at today,
-                // but guard just in case of timezone edge cases)
-                guard cal.isDateInToday(dayDate) || dayDate > now else { continue }
-                guard days.count < 10 else { break }
-
-                let key = dayKey(for: dayDate, cal: cal)
-
-                // Day label
-                let name: String
-                let fullName: String
-                if cal.isDateInToday(dayDate) {
-                    name = "Today"; fullName = "Today"
-                } else {
-                    let fmt = DateFormatter()
-                    fmt.timeZone = cal.timeZone
-                    fmt.dateFormat = "EEE";  name     = fmt.string(from: dayDate)
-                    fmt.dateFormat = "EEEE"; fullName = fmt.string(from: dayDate)
-                }
-
-                let code = d.weatherCode[i]
-
-                let tempPoints: [HourlyTempPoint] = (hourlyByDay[key] ?? []).map {
-                    HourlyTempPoint(time: $0.time, temperature: $0.temperature,
-                                    weatherCode: $0.weatherCode,
-                                    precipitationProbability: $0.precipitationProbability)
-                }
-
-                let noaa = noaaData[key]
-                let noaaCondition = noaa?.condition ?? ""
-                // Use NOAA condition for short label if available, otherwise WMO
-                let shortLabel = noaaCondition.isEmpty ? wmoDescription(code: code, isDay: true) : noaaCondition
-
-                days.append(DailyForecast(
-                    dayName: name,
-                    fullDayName: fullName,
-                    weatherCode: code,
-                    shortForecast: shortLabel,
-                    noaaCondition: noaaCondition,
-                    detailedForecast: noaa?.detailedForecast ?? "",
-                    snowAccumulation: noaa?.snowAccumulation,
-                    precipProbability: d.precipitationProbabilityMax[i],
-                    high: d.temperature2mMax[i],
-                    low: d.temperature2mMin[i],
-                    windSpeed: d.windSpeed10mMax[i],
-                    windDirection: compassDirection(from: d.windDirection10mDominant[i]),
-                    hourlyTemps: tempPoints
-                ))
-            }
-            daily = days
-
-            // ── Global scale ──────────────────────────────────────────
-            let highs = daily.compactMap { $0.high }
-            let lows  = daily.compactMap { $0.low }
-            if !highs.isEmpty && !lows.isEmpty {
-                globalLow  = (lows.min()!  - 2).rounded()
-                globalHigh = (highs.max()! + 2).rounded()
-            }
-            dailyHigh = daily.first?.high
-            dailyLow  = daily.first?.low
-
-            // ── Sunrise/sunset ────────────────────────────────────────
-            if let sr = d.sunrise.first, let ss = d.sunset.first {
-                sunEvent = SunEvent(
-                    sunrise: parseOMDate(sr, utcOffset: offset),
-                    sunset:  parseOMDate(ss, utcOffset: offset)
-                )
-            }
+            
+            // 5. Calculate Global Min/Max for unified chart scaling
+            calculateGlobalBounds(days: days)
 
         } catch {
-            errorMessage = "Error: \(error.localizedDescription)"
-            print("WeatherViewModel error: \(error)")
+            self.errorMessage = "Failed to load weather: \(error.localizedDescription)"
         }
 
-        isLoading = false
+        self.isLoading = false
     }
 
-    private func dayKey(for date: Date, cal: Calendar) -> String {
-        let c = cal.dateComponents([.year, .month, .day], from: date)
-        return "\(c.year!)-\(c.month!)-\(c.day!)"
+    func setLocationName(_ name: String) {
+        self.locationName = name
+    }
+
+    private func updateLocationName(for coord: CLLocationCoordinate2D) async {
+        let request = MKLocalSearch.Request()
+        request.region = MKCoordinateRegion(center: coord, span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01))
+        let search = MKLocalSearch(request: request)
+        
+        do {
+            let response = try await search.start()
+            if let mapItem = response.mapItems.first {
+                let name = mapItem.name ?? ""
+                
+                // Use the localized address string if the granular components are being fussy
+                // This is the "safe" way that works across all iOS versions
+                let city = mapItem.placemark.locality ?? ""
+                let state = mapItem.placemark.administrativeArea ?? ""
+                
+                if !name.isEmpty && Int(name) == nil && !name.contains(city) {
+                    self.locationName = name // Best for Ski Resorts/Points of Interest
+                } else {
+                    self.locationName = city.isEmpty ? state : "\(city), \(state)"
+                }
+            }
+        } catch {
+            self.locationName = "My Location"
+        }
+    }
+
+    private func calculateGlobalBounds(days: [DailyForecast]) {
+        let highs = days.map { $0.high }
+        let lows = days.map { $0.low }
+        if let minL = lows.min(), let maxH = highs.max() {
+            self.globalLow = (minL - 2).rounded(.down)
+            self.globalHigh = (maxH + 2).rounded(.up)
+        }
     }
 }
