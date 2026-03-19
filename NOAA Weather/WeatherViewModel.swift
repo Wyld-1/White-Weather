@@ -4,21 +4,27 @@ import Observation
 import MapKit
 
 enum WeatherBackground {
-    case sun, clouds, rain, snow
-    
+    case sun, mostlySunny, clouds, drizzle, rain, snow
+
     static func from(code: Int) -> WeatherBackground {
         switch code {
-        case 71...77, 85, 86:           return .snow
-        case 51...67, 80...82, 95...99: return .rain
-        case 2, 3, 45, 48:              return .clouds
-        default:                        return .sun
+        case 71...77, 85, 86:                   return .snow
+        case 65, 66, 67, 82, 95...99:           return .rain      // heavy rain, freezing rain, thunderstorms
+        case 51...64, 80, 81:                   return .drizzle   // light drizzle, light/moderate rain, light showers
+        case 3, 45, 48:                         return .clouds    // overcast, fog
+        case 1, 2:                              return .mostlySunny  // mainly clear, partly cloudy
+        default:                                return .sun       // code 0: clear sky
         }
     }
-    
+
     var videoName: String {
         switch self {
-        case .sun: return "sun"; case .clouds: return "clouds"
-        case .rain: return "rain"; case .snow: return "snow"
+        case .sun:         return "sun"
+        case .mostlySunny: return "mostlysunny"
+        case .clouds:      return "clouds"
+        case .drizzle:     return "drizzle"
+        case .rain:        return "rain"
+        case .snow:        return "snow"
         }
     }
 }
