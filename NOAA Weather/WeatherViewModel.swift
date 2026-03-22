@@ -27,6 +27,26 @@ enum WeatherBackground {
         case .snow:        return "snow"
         }
     }
+
+    // Derive background from a NOAA condition string (e.g. "Mostly Sunny", "Chance Snow Showers").
+    // Returns nil if condition is empty or unrecognised — caller falls back to WMO code.
+    static func fromCondition(_ condition: String) -> WeatherBackground? {
+        let c = condition.lowercased()
+        guard !c.isEmpty else { return nil }
+        // Handle "X then Y" — use the dominant (post-then) part
+        let part = c.components(separatedBy: " then ").last ?? c
+        if part.contains("thunder") || part.contains("tstm")               { return .rain }
+        if part.contains("blizzard") || part.contains("heavy snow")         { return .snow }
+        if part.contains("snow") || part.contains("flurr") || part.contains("sleet") { return .snow }
+        if part.contains("heavy rain") || part.contains("shower")           { return .rain }
+        if part.contains("rain") || part.contains("drizzle")               { return .drizzle }
+        if part.contains("fog") || part.contains("mist")                   { return .clouds }
+        if part.contains("overcast") || part.contains("cloudy")            { return .clouds }
+        if part.contains("mostly sunny") || part.contains("mostly clear")  { return .mostlySunny }
+        if part.contains("partly sunny") || part.contains("partly cloudy") { return .mostlySunny }
+        if part.contains("sunny") || part.contains("clear") || part.contains("fair") { return .sun }
+        return nil
+    }
 }
 
 @Observable
@@ -45,7 +65,6 @@ final class WeatherViewModel {
     var locationName: String = ""
     var background: WeatherBackground = .sun
     var isLoading = false
-    var isAnalyzing = false   // true while AI night-severity analysis is running
     var errorMessage: String?
 
     // Chart scaling
@@ -77,22 +96,21 @@ final class WeatherViewModel {
                 lon: coordinate.longitude
             )
 
-            // Phase 1: show weather immediately
+            // Show weather immediately
             current = cur
             daily   = days
             sunEvent = sun
-            background = WeatherBackground.from(code: cur.weatherCode)
-            hourly = Array((days.first?.hourlyTemps ?? []).prefix(12))
+
+            // Background + description from NOAA condition string, WMO code as fallback
+            let todayCondition = scrapedPeriods[todayKey()]?.dayCondition ?? ""
+            background = WeatherBackground.fromCondition(todayCondition)
+                      ?? WeatherBackground.from(code: cur.weatherCode)
+
+            // Hourly: current hour → 11pm today
+            hourly = hourlyWindow(from: days.first?.hourlyTemps ?? [])
             calculateGlobalBounds(days: days)
             isLoading = false
             lastFetchTime = Date()
-
-            // Phase 2: AI night-severity analysis in background, concurrent across all days
-            guard !scrapedPeriods.isEmpty else { return }
-            isAnalyzing = true
-            let severityMap = await NOAAScraper.shared.analyzeNightSeverity(for: scrapedPeriods)
-            applyNightSeverity(severityMap, scrapedPeriods: scrapedPeriods)
-            isAnalyzing = false
 
         } catch {
             errorMessage = "Failed to load weather: \(error.localizedDescription)"
@@ -100,40 +118,19 @@ final class WeatherViewModel {
         }
     }
 
-    /// Patches daily array in-place with AI results, updating only the night symbol.
-    private func applyNightSeverity(
-        _ map: [String: Bool],
-        scrapedPeriods: [String: NOAAScraper.ScrapedPeriod]
-    ) {
-        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
-        daily = daily.map { day in
-            let key = fmt.string(from: day.date)
-            guard let severe = map[key], severe,
-                  let period = scrapedPeriods[key] else { return day }
-            // Build night symbol from the actual night condition string
-            let nightSym = noaaSFSymbol(condition: period.nightCondition, isDay: false)
-                        ?? nightFallback(for: day.precipType)
-            return DailyForecast(
-                id: day.id, date: day.date, high: day.high, low: day.low,
-                precipProbability: day.precipProbability,
-                shortForecast: day.shortForecast,
-                dayProse: day.dayProse, nightProse: day.nightProse,
-                accumulation: day.accumulation,
-                precipType: day.precipType,
-                isNightSevere: true,
-                daySymbol: day.daySymbol,
-                nightSymbol: nightSym,
-                hourlyTemps: day.hourlyTemps
-            )
-        }
+    // Hourly window: from the current floored hour through 11pm today.
+    private func hourlyWindow(from all: [HourlyForecast]) -> [HourlyForecast] {
+        let cal = Calendar.current
+        let now = Date()
+        let currentHour = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) ?? now
+        var endComponents = cal.dateComponents([.year, .month, .day], from: now)
+        endComponents.hour = 23
+        let endOfDay = cal.date(from: endComponents) ?? now
+        return all.filter { $0.time >= currentHour && $0.time <= endOfDay }
     }
 
-    private func nightFallback(for type: PrecipType) -> String {
-        switch type {
-        case .snow, .mixed: return "cloud.snow.fill"
-        case .rain:         return "cloud.rain.fill"
-        case .none:         return "cloud.bolt.rain.fill"
-        }
+    private func todayKey() -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date())
     }
 
     func setLocationName(_ name: String) {

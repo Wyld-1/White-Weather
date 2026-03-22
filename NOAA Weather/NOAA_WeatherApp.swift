@@ -4,6 +4,7 @@
 
 import SwiftUI
 import Combine
+import AVFoundation
 
 extension Notification.Name {
     static let refreshAllLocations = Notification.Name("refreshAllLocations")
@@ -13,6 +14,11 @@ extension Notification.Name {
 struct NOAA_WeatherApp: App {
     @State private var locationStore = LocationStore()
     @State private var locationManager = LocationManager()
+
+    init() {
+        try? AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+        try? AVAudioSession.sharedInstance().setActive(true)
+    }
 
     var body: some Scene {
         WindowGroup {

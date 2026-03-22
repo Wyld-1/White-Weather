@@ -37,12 +37,11 @@ final class VideoLoopView: UIView {
         currentName = name
 
         guard let url = Bundle.main.url(forResource: name, withExtension: "mov") else { return }
-
-        let asset = AVAsset(url: url)
+        let asset = AVURLAsset(url: url)
         let item = AVPlayerItem(asset: asset)
         
         let player = AVQueuePlayer()
-        player.isMuted = true // Optimization: Don't initialize audio hardware
+        player.isMuted = true
         player.preventsDisplaySleepDuringVideoPlayback = false
         
         playerLooper = AVPlayerLooper(player: player, templateItem: item)
@@ -83,3 +82,4 @@ final class VideoLoopView: UIView {
         cleanup()
     }
 }
+

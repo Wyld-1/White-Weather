@@ -37,7 +37,7 @@ struct DailyForecast: Identifiable {
 
 struct CurrentConditions {
     let temperature: Double
-    let description: String
+    let description: String  // NOAA condition string if available, else WMO
     let windSpeed: Double
     let windGusts: Double
     let windDirection: Double
@@ -122,8 +122,8 @@ struct OpenMeteoResponse: Decodable, Sendable {
 actor WeatherRepository {
     static let shared = WeatherRepository()
 
-    /// Returns weather data immediately. The raw scraped periods are also returned
-    /// so the caller can kick off AI analysis separately without blocking display.
+    // Returns weather data immediately. The raw scraped periods are also returned
+    // so the caller can kick off AI analysis separately without blocking display.
     func fetchAll(lat: Double, lon: Double) async throws -> (
         CurrentConditions, [DailyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
     ) {
@@ -139,10 +139,20 @@ actor WeatherRepository {
         let tz     = TimeZone(secondsFromGMT: offset) ?? .current
 
         // Current conditions
+        // Use today's NOAA condition string for description if available
+        let todayFmtKey: String = {
+            let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = tz
+            return f.string(from: Date())
+        }()
+        let todayCondition = noaa[todayFmtKey]?.dayCondition ?? ""
         let c = om.current
+        // Extract clean label — handles both tombstone strings and prose fallbacks
+        let descriptionLabel = todayCondition.isEmpty
+            ? wmoDescription(code: c.weatherCode, isDay: c.isDay == 1)
+            : extractConditionLabel(from: todayCondition)
         let current = CurrentConditions(
             temperature:        c.temperature2m,
-            description:        wmoDescription(code: c.weatherCode, isDay: c.isDay == 1),
+            description:        descriptionLabel,
             windSpeed:          c.windSpeed10m,
             windGusts:          c.windGusts10m,
             windDirection:      c.windDirection10m,
@@ -199,7 +209,7 @@ actor WeatherRepository {
                 high:            high,
                 low:             low,
                 precipProbability: noaaData?.precipChance ?? (om.daily.precipitationProbabilityMax[i] ?? 0),
-                shortForecast:   noaaData?.condition ?? wmoDescription(code: dayCode, isDay: true),
+                shortForecast:   extractConditionLabel(from: noaaData?.condition ?? wmoDescription(code: dayCode, isDay: true)),
                 dayProse:        noaaData?.dayProse ?? "",
                 nightProse:      noaaData?.nightProse ?? "",
                 accumulation:    noaaData?.accumulation ?? .none,
@@ -219,7 +229,7 @@ actor WeatherRepository {
         return (current, dailyModels, sun, noaa)
     }
 
-    /// Returns an appropriate night SF Symbol based on precip type when severity is flagged.
+    // Returns an appropriate night SF Symbol based on precip type when severity is flagged.
     private func nightSFSymbol(for type: PrecipType) -> String {
         switch type {
         case .snow, .mixed: return "cloud.snow.fill"
@@ -349,6 +359,11 @@ actor NOAAScraper {
                 precipType = .none
             }
 
+            let isNightSevere = conditionsAreNightSevere(
+                day:   day.dayCondition,
+                night: day.nightCondition
+            )
+
             result[key] = ScrapedPeriod(
                 condition:      day.dayCondition.isEmpty ? day.dayLabel : day.dayCondition,
                 dayProse:       day.dayText,
@@ -357,36 +372,11 @@ actor NOAAScraper {
                 nightCondition: day.nightCondition,
                 accumulation:   accumulation,
                 precipType:     precipType,
-                isNightSevere:  false,   // patched later by AI analysis
+                isNightSevere:  isNightSevere,
                 precipChance:   day.precipChance
             )
         }
         return result
-    }
-
-    /// Run AI analysis on already-scraped periods and return a map of
-    /// dateKey → isNightSevere. Called concurrently after initial display.
-    func analyzeNightSeverity(for periods: [String: ScrapedPeriod]) async -> [String: Bool] {
-        // Only analyze days that have both day and night text — otherwise model has nothing to contrast
-        let candidates = periods.filter { !$0.value.dayProse.isEmpty && !$0.value.nightProse.isEmpty }
-        guard !candidates.isEmpty else { return [:] }
-
-        var results: [String: Bool] = [:]
-        await withTaskGroup(of: (String, Bool).self) { group in
-            for (key, period) in candidates {
-                group.addTask {
-                    let analysis = await ForecastAnalyzer.shared.analyze(
-                        dayProse: period.dayProse,
-                        nightProse: period.nightProse
-                    )
-                    return (key, analysis?.isNightSevere ?? false)
-                }
-            }
-            for await (key, severe) in group {
-                results[key] = severe
-            }
-        }
-        return results
     }
 
     private func dateKey(_ date: Date) -> String {
@@ -401,7 +391,7 @@ actor NOAAScraper {
         return Int(text[range])
     }
 
-    /// Regex-based accumulation extraction. Only fires on snow/accumulation triggers.
+    // Regex-based accumulation extraction. Only fires on snow/accumulation triggers.
     private func regexAccumRangeIsolated(from text: String) -> AccumulationRange {
         let lower = text.lowercased()
 
@@ -467,8 +457,8 @@ actor NOAAScraper {
         return .none
     }
 
-    /// Returns first capture group(s) from a regex match.
-    /// If groupCount > 1, returns "group1|group2" joined by pipe.
+    // Returns first capture group(s) from a regex match.
+    // If groupCount > 1, returns "group1|group2" joined by pipe.
     private func firstRegexMatch(_ pattern: String, in text: String, groupCount: Int = 1) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
@@ -511,6 +501,104 @@ actor OpenMeteoClient {
         let (data, _) = try await URLSession.shared.data(from: c.url!)
         return try JSONDecoder().decode(OpenMeteoResponse.self, from: data)
     }
+}
+
+// MARK: - Weather Category (for isNightSevere comparison)
+
+enum WeatherCategory: Hashable {
+    case clear        // sunny, clear, fair, mostly sunny
+    case partlyCloudy // partly sunny, partly cloudy, mostly cloudy
+    case cloudy       // overcast, cloudy
+    case fog
+    case drizzle      // light rain, drizzle
+    case rain         // rain, showers, heavy rain
+    case snow         // snow, flurries, sleet, wintry mix
+    case storm        // thunderstorm
+}
+
+// Classify a NOAA condition string into a broad weather category.
+nonisolated func weatherCategory(from condition: String) -> WeatherCategory {
+    let c = condition.lowercased()
+    // Handle "X then Y" — dominant part is after "then"
+    let part = c.components(separatedBy: " then ").last ?? c
+    if part.contains("thunder") || part.contains("tstm")                  { return .storm }
+    if part.contains("blizzard") || part.contains("heavy snow")            { return .snow }
+    if part.contains("snow") || part.contains("flurr") || part.contains("sleet") ||
+       part.contains("wintry mix")                                         { return .snow }
+    if part.contains("heavy rain") || part.contains("shower")             { return .rain }
+    if part.contains("rain")                                               { return .rain }
+    if part.contains("drizzle")                                            { return .drizzle }
+    if part.contains("fog") || part.contains("mist")                      { return .fog }
+    if part.contains("overcast") || part.contains("cloudy")               { return .cloudy }
+    if part.contains("partly sunny") || part.contains("partly cloudy") ||
+       part.contains("mostly cloudy")                                      { return .partlyCloudy }
+    return .clear  // sunny, mostly sunny, clear, fair, or unknown
+}
+
+// True when day and night conditions are notably different.
+// Symmetric: heavy snow day + clear night is just as notable as clear day + heavy snow night.
+// Extracts the short condition label from any NOAA string.
+// Works on both tombstone conditions ("Mostly Sunny") and prose
+// ("This Afternoon: Mostly sunny, with a high near 42...").
+// Always returns title-cased, e.g. "Mostly Sunny".
+nonisolated func extractConditionLabel(from text: String) -> String {
+    guard !text.isEmpty else { return text }
+
+    // Strip period-name prefix: "Monday: ", "This Afternoon: ", "Tonight: ", etc.
+    var working = text
+    if let colonRange = working.range(of: ": ") {
+        let prefix = String(working[working.startIndex..<colonRange.lowerBound])
+        // Only strip if the prefix is 1–2 words — NOAA period labels are "Tonight",
+        // "Monday", "Monday Night", "This Afternoon". Never a weather description.
+        if prefix.split(separator: " ").count <= 2 {
+            working = String(working[colonRange.upperBound...])
+        }
+    }
+
+    // Take everything before the first comma or period — that's the condition
+    let sentence = working
+        .components(separatedBy: CharacterSet(charactersIn: ",."))
+        .first ?? working
+    let trimmed = sentence.trimmingCharacters(in: .whitespaces)
+
+    // Title-case it
+    return trimmed
+        .split(separator: " ")
+        .map { word -> String in
+            // Keep small words lowercase unless they're the first word
+            let w = String(word)
+            return w.prefix(1).uppercased() + w.dropFirst().lowercased()
+        }
+        .joined(separator: " ")
+}
+
+nonisolated func conditionsAreNightSevere(day: String, night: String) -> Bool {
+    guard !night.isEmpty else { return false }
+    let d = weatherCategory(from: day)
+    let n = weatherCategory(from: night)
+    guard d != n else { return false }
+
+    // Table of pairs that are worth showing a dual symbol.
+    // Order doesn't matter — we check both directions.
+    let severePairs: Set<[WeatherCategory]> = [
+        [.clear,        .storm],
+        [.clear,        .snow],
+        [.clear,        .rain],
+        [.clear,        .fog],
+        [.partlyCloudy, .storm],
+        [.partlyCloudy, .snow],
+        [.cloudy,       .storm],
+        [.cloudy,       .snow],
+        [.drizzle,      .storm],
+        [.drizzle,      .snow],
+        [.rain,         .snow],
+        [.rain,         .storm],
+        [.snow,         .storm],
+        [.snow,         .clear],      // heavy snow day, clear night
+        [.storm,        .clear],      // thunderstorm day, clear night
+    ]
+    return severePairs.contains([d, n].sorted(by: { "\($0)" < "\($1)" }))
+        || severePairs.contains([n, d].sorted(by: { "\($0)" < "\($1)" }))
 }
 
 // MARK: - WMO Helpers
