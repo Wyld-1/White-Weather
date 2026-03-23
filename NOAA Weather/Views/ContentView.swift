@@ -86,25 +86,51 @@ struct AddLocationPage: View {
     var body: some View {
         ZStack {
             VideoBackgroundView(videoName: "sun").ignoresSafeArea()
-            RadialGradient(stops: [.init(color: .blue.opacity(0.3), location: 0), .init(color: .black.opacity(0.85), location: 0.8)], center: .top, startRadius: 10, endRadius: 600).ignoresSafeArea()
+            RadialGradient(stops: [.init(color: .blue.opacity(0.4), location: 0),
+                                   .init(color: .black.opacity(0.7), location: 0.8)],
+                           center: .top, startRadius: 10, endRadius: 600).ignoresSafeArea()
 
             VStack(spacing: 30) {
                 Spacer()
-                Spacer()
-                Button { showSearch = true } label: {
-                    ZStack {
-                        Circle().fill(Color.accentColor).frame(width: 84, height: 84).shadow(color: .accentColor.opacity(0.5), radius: 20)
-                        Image(systemName: "plus").font(.system(size: 36, weight: .light)).foregroundStyle(.white)
-                    }
-                }.buttonStyle(.plain)
                 
-                Spacer()
+                Group {
+                    if #available(iOS 26.0, *) {
+                        Button(action: {
+                            showSearch = true
+                        }) {
+                            Label("Add Location", systemImage: "plus")
+                                .bold()
+                                .labelStyle(.iconOnly)
+                                .foregroundStyle(.white)
+                                .font(.system(size: 50, weight: .ultraLight))
+                                .frame(width: 90, height: 90)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(.blue)
+                        .buttonBorderShape(.circle)
+                    } else {
+                        Button { showSearch = true } label: {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color.accentColor)
+                                            .frame(width: 84, height: 84)
+                                            .shadow(color: .accentColor.opacity(0.5), radius: 20)
+                                        
+                                        Image(systemName: "plus")
+                                            .font(.system(size: 36, weight: .light))
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                    }
+                .padding(.bottom, 120)
 
                 VStack(spacing: 8) {
                     Text("Add Location").font(.system(size: 32, weight: .bold, design: .rounded)).foregroundStyle(.white)
                     Text("Track your local mountains, \ncities, and favorites.").font(.system(size: 17)).multilineTextAlignment(.center).foregroundStyle(.white.opacity(0.6))
                 }
-                Spacer(); Spacer()
+                Spacer()
             }
         }
         .onAppear { withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: false)) { isAnimating = true } }

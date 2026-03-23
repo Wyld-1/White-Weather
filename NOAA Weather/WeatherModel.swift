@@ -345,19 +345,11 @@ actor NOAAScraper {
             let combined = day.dayText + " " + day.nightText
             let accumulation = regexAccumRangeIsolated(from: combined)
 
-            let dayCondLower  = day.dayCondition.lowercased()
-            let nightCondLower = day.nightCondition.lowercased()
-            let combinedCond  = dayCondLower + " " + nightCondLower + " " + combined.lowercased()
-            let precipType: PrecipType
-            if combinedCond.contains("snow") && combinedCond.contains("rain") {
-                precipType = .mixed
-            } else if combinedCond.contains("snow") || combinedCond.contains("flurr") || combinedCond.contains("blizzard") {
-                precipType = .snow
-            } else if combinedCond.contains("rain") || combinedCond.contains("shower") || combinedCond.contains("drizzle") {
-                precipType = .rain
-            } else {
-                precipType = .none
-            }
+            let precipType = PrecipType.from(
+                dayCondition:   day.dayCondition,
+                nightCondition: day.nightCondition,
+                prose:          combined
+            )
 
             let isNightSevere = conditionsAreNightSevere(
                 day:   day.dayCondition,
