@@ -130,12 +130,11 @@ struct WeatherContentView: View {
 
             // Versatile warning slot
             Group {
-                let gusts = viewModel.current?.windGusts
                 if let gusts = viewModel.current?.windGusts, gusts >= 40 {
                     WeatherAlertBanner(
-                        title: "Wind Hold Risk",
+                        title: viewModel.isSkiResort ? "Wind Hold Risk": "High Wind Alert",
                         message: "Gusts up to \(Int(gusts.rounded())) mph",
-                        tintColor: .red,
+                        tintColor: viewModel.isSkiResort ? .red: .yellow,
                         warningSymbol: "wind.circle.fill"
                     )
                     .padding(.horizontal, 16)

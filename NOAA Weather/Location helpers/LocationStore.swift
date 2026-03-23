@@ -14,6 +14,7 @@ struct SavedLocation: Identifiable, Codable, Equatable {
     var name: String          // Display name e.g. "Seattle, WA" or "Crystal Mountain, WA"
     var latitude: Double
     var longitude: Double
+    var isSkiResort: Bool = false
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)

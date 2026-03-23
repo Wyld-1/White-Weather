@@ -54,6 +54,7 @@ enum WeatherBackground {
 final class WeatherViewModel {
     private var lastFetchTime: Date?
     private var lastFetchedCoordinate: CLLocationCoordinate2D?
+    var isSkiResort: Bool = false
 
     // Weather data
     var current: CurrentConditions?
@@ -136,6 +137,10 @@ final class WeatherViewModel {
     func setLocationName(_ name: String) {
         self.locationName = name
     }
+    
+    func setSkiResort(_ value: Bool) {
+            self.isSkiResort = value
+        }
 
     private func updateLocationName(for coord: CLLocationCoordinate2D) async {
         let request = MKLocalSearch.Request()

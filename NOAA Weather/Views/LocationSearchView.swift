@@ -99,8 +99,16 @@ struct LocationSearchView: View {
     }
 
     private func addSkiResort(_ resort: SkiResort) {
-        store.add(SavedLocation(id: UUID(), name: resort.name, latitude: resort.coordinate.latitude, longitude: resort.coordinate.longitude))
-        dismiss(); onAdded?()
+        let newLoc = SavedLocation(
+            id: UUID(),
+            name: resort.name,
+            latitude: resort.coordinate.latitude,
+            longitude: resort.coordinate.longitude,
+            isSkiResort: true
+        )
+        store.add(newLoc)
+        dismiss()
+        onAdded?()
     }
 
     private func resolveAndAdd(_ completion: MKLocalSearchCompletion) async {
@@ -111,7 +119,13 @@ struct LocationSearchView: View {
             let state = item.placemark.administrativeArea ?? ""
             let name = (city.isEmpty) ? (item.name ?? completion.title) : "\(city), \(state)"
             
-            store.add(SavedLocation(id: UUID(), name: name, latitude: item.placemark.coordinate.latitude, longitude: item.placemark.coordinate.longitude))
+            store.add(SavedLocation(
+                id: UUID(),
+                name: name,
+                latitude: item.placemark.coordinate.latitude,
+                longitude: item.placemark.coordinate.longitude,
+                isSkiResort: false
+            ))
         }
         isResolving = false; dismiss(); onAdded?()
     }
@@ -129,8 +143,12 @@ struct SkiResultRow: View {
                     .foregroundStyle(.cyan)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(resort.name).font(.system(size: 16)).foregroundStyle(.primary)
-                    Text("\(resort.state) Ski Resort").font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text(resort.name)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                    Text("\(resort.state) Ski Resort")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.gray)
                 }
             }
         }
@@ -143,11 +161,17 @@ struct MapResultRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                Image(systemName: "mappin").foregroundStyle(.secondary).frame(width: 20)
+                Image(systemName: "mappin.and.ellipse")
+                    .foregroundStyle(.white)
+                    .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(completion.title).font(.system(size: 16)).foregroundStyle(.primary)
+                    Text(completion.title)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
                     if !completion.subtitle.isEmpty {
-                        Text(completion.subtitle).font(.system(size: 13)).foregroundStyle(.secondary)
+                        Text(completion.subtitle)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.gray)
                     }
                 }
             }

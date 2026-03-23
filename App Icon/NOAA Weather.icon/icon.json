@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "automatic-gradient" : "display-p3:0.17811,0.39653,0.47725,1.00000"
+    "automatic-gradient" : "display-p3:0.26275,0.58039,0.70980,1.00000"
   },
   "groups" : [
     {
@@ -9,15 +9,13 @@
           "fill" : {
             "solid" : "extended-gray:1.00000,1.00000"
           },
-          "glass" : true,
-          "image-name" : "W.png",
-          "name" : "W",
-          "opacity" : 1,
+          "image-name" : "W 2.png",
+          "name" : "W 2",
           "position" : {
             "scale" : 0.85,
             "translation-in-points" : [
-              -47.78125,
-              12.200000000000045
+              -60.18346135903175,
+              28.323976724617978
             ]
           }
         }

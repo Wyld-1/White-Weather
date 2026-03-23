@@ -8,7 +8,7 @@ import SwiftUI
 import MapKit
 
 struct LocationPageView: View {
-    @Environment(LocationStore.self) private var store // Fix: Store in scope
+    @Environment(LocationStore.self) private var store
     @Environment(LocationManager.self) private var locationManager
     
     @State private var viewModel = WeatherViewModel()
@@ -42,8 +42,7 @@ struct LocationPageView: View {
                     }
                     .refreshable {
                         guard let coord = coordinate else { return }
-                        // Detach so SwiftUI's task cancellation on scroll-snap
-                        // doesn't cancel our network requests.
+                        // Detach so SwiftUI's task cancellation on scroll-snap doesn't cancel our network requests.
                         await Task.detached(priority: .userInitiated) {
                             await viewModel.load(coordinate: coord, forceRefresh: true)
                         }.value
@@ -52,7 +51,6 @@ struct LocationPageView: View {
             }
         }
         .sheet(item: $selectedDay) { day in
-            // This will now trigger because selectedDay is no longer nil
             DayDetailSheet(
                 day: day,
                 globalLow: viewModel.globalLow,
@@ -82,9 +80,10 @@ struct LocationPageView: View {
     private func triggerFetch() {
         guard let coord = coordinate else { return }
         
-        // If we are looking at a saved location, set its known name FIRST
+        // If we are looking at a saved location, set its known name first
         if let savedLoc = savedLocation {
             viewModel.setLocationName(savedLoc.name)
+            viewModel.setSkiResort(savedLoc.isSkiResort)
         }
         
         // Now tell it to load the data. We pass skipGeocode = true
