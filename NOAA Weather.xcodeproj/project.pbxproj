@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		2324906A2F67B5DB00B5A9C7 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = 232490692F67B5DB00B5A9C7 /* SwiftSoup */; };
 		2324906C2F67B5DB00B5A9C7 /* SwiftSoupProfile in Frameworks */ = {isa = PBXBuildFile; productRef = 2324906B2F67B5DB00B5A9C7 /* SwiftSoupProfile */; };
+		23F27F022F719E5300A2B2FE /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23F27F012F719E5200A2B2FE /* WidgetKit.framework */; };
+		23F27F042F719E5300A2B2FE /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23F27F032F719E5300A2B2FE /* SwiftUI.framework */; };
+		23F27F152F719E5500A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 23F27EFF2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,17 +29,62 @@
 			remoteGlobalIDString = 2397FD9D2F676BD80064D57F;
 			remoteInfo = "NOAA Weather";
 		};
+		23F27F132F719E5500A2B2FE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 2397FD962F676BD80064D57F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 23F27EFE2F719E5200A2B2FE;
+			remoteInfo = "wildcat.NOAA-Weather.widgetsExtension";
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		23F27F1A2F719E5500A2B2FE /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				23F27F152F719E5500A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		2397FD9E2F676BD80064D57F /* NOAA Weather.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "NOAA Weather.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2397FDAB2F676BDA0064D57F /* NOAA WeatherTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "NOAA WeatherTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		2397FDB52F676BDA0064D57F /* NOAA WeatherUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "NOAA WeatherUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		23D8013B2F720188009AD4D5 /* wildcat.NOAA-Weather.widgetsExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "wildcat.NOAA-Weather.widgetsExtension.entitlements"; sourceTree = "<group>"; };
+		23F27EFF2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "wildcat.NOAA-Weather.widgetsExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		23F27F012F719E5200A2B2FE /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		23F27F032F719E5300A2B2FE /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		23D8013A2F71F511009AD4D5 /* Exceptions for "NOAA Weather" folder in "wildcat.NOAA-Weather.widgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				WidgetData.swift,
+			);
+			target = 23F27EFE2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension */;
+		};
+		23F27F162F719E5500A2B2FE /* Exceptions for "wildcat.NOAA-Weather.widgets" folder in "wildcat.NOAA-Weather.widgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 23F27EFE2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		2397FDA02F676BD80064D57F /* NOAA Weather */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				23D8013A2F71F511009AD4D5 /* Exceptions for "NOAA Weather" folder in "wildcat.NOAA-Weather.widgetsExtension" target */,
+			);
 			path = "NOAA Weather";
 			sourceTree = "<group>";
 		};
@@ -48,6 +96,14 @@
 		2397FDB82F676BDA0064D57F /* NOAA WeatherUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "NOAA WeatherUITests";
+			sourceTree = "<group>";
+		};
+		23F27F052F719E5300A2B2FE /* wildcat.NOAA-Weather.widgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				23F27F162F719E5500A2B2FE /* Exceptions for "wildcat.NOAA-Weather.widgets" folder in "wildcat.NOAA-Weather.widgetsExtension" target */,
+			);
+			path = "wildcat.NOAA-Weather.widgets";
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -76,15 +132,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		23F27EFC2F719E5200A2B2FE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				23F27F042F719E5300A2B2FE /* SwiftUI.framework in Frameworks */,
+				23F27F022F719E5300A2B2FE /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		2397FD952F676BD80064D57F = {
 			isa = PBXGroup;
 			children = (
+				23D8013B2F720188009AD4D5 /* wildcat.NOAA-Weather.widgetsExtension.entitlements */,
 				2397FDA02F676BD80064D57F /* NOAA Weather */,
 				2397FDAE2F676BDA0064D57F /* NOAA WeatherTests */,
 				2397FDB82F676BDA0064D57F /* NOAA WeatherUITests */,
+				23F27F052F719E5300A2B2FE /* wildcat.NOAA-Weather.widgets */,
+				23F27F002F719E5200A2B2FE /* Frameworks */,
 				2397FD9F2F676BD80064D57F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -95,8 +163,18 @@
 				2397FD9E2F676BD80064D57F /* NOAA Weather.app */,
 				2397FDAB2F676BDA0064D57F /* NOAA WeatherTests.xctest */,
 				2397FDB52F676BDA0064D57F /* NOAA WeatherUITests.xctest */,
+				23F27EFF2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		23F27F002F719E5200A2B2FE /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				23F27F012F719E5200A2B2FE /* WidgetKit.framework */,
+				23F27F032F719E5300A2B2FE /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -109,10 +187,12 @@
 				2397FD9A2F676BD80064D57F /* Sources */,
 				2397FD9B2F676BD80064D57F /* Frameworks */,
 				2397FD9C2F676BD80064D57F /* Resources */,
+				23F27F1A2F719E5500A2B2FE /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				23F27F142F719E5500A2B2FE /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				2397FDA02F676BD80064D57F /* NOAA Weather */,
@@ -172,6 +252,28 @@
 			productReference = 2397FDB52F676BDA0064D57F /* NOAA WeatherUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		23F27EFE2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23F27F172F719E5500A2B2FE /* Build configuration list for PBXNativeTarget "wildcat.NOAA-Weather.widgetsExtension" */;
+			buildPhases = (
+				23F27EFB2F719E5200A2B2FE /* Sources */,
+				23F27EFC2F719E5200A2B2FE /* Frameworks */,
+				23F27EFD2F719E5200A2B2FE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				23F27F052F719E5300A2B2FE /* wildcat.NOAA-Weather.widgets */,
+			);
+			name = "wildcat.NOAA-Weather.widgetsExtension";
+			packageProductDependencies = (
+			);
+			productName = "wildcat.NOAA-Weather.widgetsExtension";
+			productReference = 23F27EFF2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -192,6 +294,9 @@
 					2397FDB42F676BDA0064D57F = {
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = 2397FD9D2F676BD80064D57F;
+					};
+					23F27EFE2F719E5200A2B2FE = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
@@ -215,6 +320,7 @@
 				2397FD9D2F676BD80064D57F /* NOAA Weather */,
 				2397FDAA2F676BDA0064D57F /* NOAA WeatherTests */,
 				2397FDB42F676BDA0064D57F /* NOAA WeatherUITests */,
+				23F27EFE2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -235,6 +341,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		2397FDB32F676BDA0064D57F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		23F27EFD2F719E5200A2B2FE /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -265,6 +378,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		23F27EFB2F719E5200A2B2FE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -277,6 +397,11 @@
 			isa = PBXTargetDependency;
 			target = 2397FD9D2F676BD80064D57F /* NOAA Weather */;
 			targetProxy = 2397FDB62F676BDA0064D57F /* PBXContainerItemProxy */;
+		};
+		23F27F142F719E5500A2B2FE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 23F27EFE2F719E5200A2B2FE /* wildcat.NOAA-Weather.widgetsExtension */;
+			targetProxy = 23F27F132F719E5500A2B2FE /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -407,6 +532,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "NOAA Weather/NOAA Weather.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PQW4KRLW78;
@@ -442,6 +568,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "NOAA Weather/NOAA Weather.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = PQW4KRLW78;
@@ -556,6 +683,68 @@
 			};
 			name = Release;
 		};
+		23F27F182F719E5500A2B2FE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = "wildcat.NOAA-Weather.widgetsExtension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PQW4KRLW78;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "wildcat.NOAA-Weather.widgets/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "wildcat.NOAA-Weather.widgets";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.NOAA-Weather.WeatherApp.wildcat-NOAA-Weather-widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		23F27F192F719E5500A2B2FE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = "wildcat.NOAA-Weather.widgetsExtension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = PQW4KRLW78;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "wildcat.NOAA-Weather.widgets/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "wildcat.NOAA-Weather.widgets";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "wildcat.NOAA-Weather.WeatherApp.wildcat-NOAA-Weather-widgets";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -591,6 +780,15 @@
 			buildConfigurations = (
 				2397FDC62F676BDA0064D57F /* Debug */,
 				2397FDC72F676BDA0064D57F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		23F27F172F719E5500A2B2FE /* Build configuration list for PBXNativeTarget "wildcat.NOAA-Weather.widgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				23F27F182F719E5500A2B2FE /* Debug */,
+				23F27F192F719E5500A2B2FE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -8,49 +8,43 @@
 import WidgetKit
 import SwiftUI
 
-struct Provider: AppIntentTimelineProvider {
-    func placeholder(in context: Context) -> SimpleEntry {
-        SimpleEntry(date: Date(), configuration: ConfigurationAppIntent())
-    }
-
-    func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> SimpleEntry {
-        SimpleEntry(date: Date(), configuration: configuration)
-    }
-    
-    func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<SimpleEntry> {
-        var entries: [SimpleEntry] = []
-
-        // Generate a timeline consisting of five entries an hour apart, starting from the current date.
-        let currentDate = Date()
-        for hourOffset in 0 ..< 5 {
-            let entryDate = Calendar.current.date(byAdding: .hour, value: hourOffset, to: currentDate)!
-            let entry = SimpleEntry(date: entryDate, configuration: configuration)
-            entries.append(entry)
-        }
-
-        return Timeline(entries: entries, policy: .atEnd)
-    }
-
-//    func relevances() async -> WidgetRelevances<ConfigurationAppIntent> {
-//        // Generate a list containing the contexts this widget is relevant in.
-//    }
+struct WeatherEntry: TimelineEntry {
+    let date: Date
+    let data: WidgetWeatherData
 }
 
-struct SimpleEntry: TimelineEntry {
-    let date: Date
-    let configuration: ConfigurationAppIntent
+struct Provider: AppIntentTimelineProvider {
+    func placeholder(in context: Context) -> WeatherEntry {
+        WeatherEntry(date: Date(), data: .placeholder)
+    }
+
+    func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> WeatherEntry {
+        let id = configuration.location?.id ?? "current"
+        return WeatherEntry(date: Date(), data: WidgetWeatherData.load(id: id) ?? .placeholder)
+    }
+
+    func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<WeatherEntry> {
+        let id = configuration.location?.id ?? "current"
+        let data = WidgetWeatherData.load(id: id) ?? .placeholder
+        let entry = WeatherEntry(date: Date(), data: data)
+        return Timeline(entries: [entry], policy: .atEnd)
+    }
 }
 
 struct wildcat_NOAA_Weather_widgetsEntryView : View {
     var entry: Provider.Entry
-
+    @Environment(\.widgetFamily) var family
+    
     var body: some View {
-        VStack {
-            Text("Time:")
-            Text(entry.date, style: .time)
-
-            Text("Favorite Emoji:")
-            Text(entry.configuration.favoriteEmoji)
+        switch family {
+        case .accessoryCircular:
+            LockScreenWidget(data: entry.data)
+        case .systemSmall:
+            SmallWidget(data: entry.data)
+        case .systemMedium:
+            MediumWidget(data: entry.data)
+        default:
+            SmallWidget(data: entry.data)
         }
     }
 }
@@ -61,28 +55,157 @@ struct wildcat_NOAA_Weather_widgets: Widget {
     var body: some WidgetConfiguration {
         AppIntentConfiguration(kind: kind, intent: ConfigurationAppIntent.self, provider: Provider()) { entry in
             wildcat_NOAA_Weather_widgetsEntryView(entry: entry)
-                .containerBackground(.fill.tertiary, for: .widget)
+                .containerBackground(for: .widget) {
+                    WidgetBackground(condition: entry.data.condition, isDay: entry.data.isDay)
+                }
+        }
+        .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular])
+    }
+}
+
+// MARK: - Layouts
+
+struct LockScreenWidget: View {
+    let data: WidgetWeatherData
+    var body: some View {
+        Gauge(value: data.temperature, in: data.low...data.high) {
+            Text("Temperature")
+        } currentValueLabel: {
+            Image(systemName: data.sfSymbol)
+        } minimumValueLabel: {
+            Text("\(Int(data.low))")
+        } maximumValueLabel: {
+            Text("\(Int(data.high))")
+        }
+        .gaugeStyle(.accessoryCircular)
+    }
+}
+
+// MARK: - Small Widget
+struct SmallWidget: View {
+    let data: WidgetWeatherData
+    var body: some View {
+        WeatherInfoView(data: data, useLargeTemp: false)
+            .foregroundStyle(.white)
+    }
+}
+
+// MARK: - Medium Widget
+struct MediumWidget: View {
+    let data: WidgetWeatherData
+    var body: some View {
+        HStack(spacing: 0) {
+            WeatherInfoView(data: data, useLargeTemp: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                //.padding(.leading, 16)
+            
+            // Verticle divider
+            Rectangle()
+                .fill(.white.opacity(0.15))
+                .frame(width: 1)
+                .padding(.vertical, 20)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("FORECAST")
+                    .font(.system(size: 10, weight: .black))
+                    .foregroundStyle(.white.opacity(0.5))
+                
+                Text(data.dayProse)
+                    .foregroundStyle(.white)
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(5)
+                
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+        }
+        .foregroundStyle(.white)
+    }
+}
+
+struct WidgetBackground: View {
+    let condition: String
+    let isDay: Bool
+    
+    var body: some View {
+        let c = condition.lowercased()
+        let colors: [Color]
+        
+        if c.contains("snow") || c.contains("sleet") || c.contains("flurr") {
+            // Snow: Bright white and slight gray
+            // Note: We use 0.95 instead of 1.0 so white text stays visible
+            colors = [Color(white: 0.95), Color(white: 0.75)]
+            
+        } else if c.contains("rain") || c.contains("drizzle") || c.contains("storm") {
+            // Rain/Storm: Deep moody blue-grays
+            colors = [Color(red: 0.15, green: 0.2, blue: 0.3), Color(red: 0.35, green: 0.4, blue: 0.5)]
+            
+        } else if !isDay {
+            // Night: Deep midnight blue
+            colors = [Color(red: 0.02, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.1, blue: 0.25)]
+            
+        } else if c.contains("clear") || c.contains("sunny") || c.contains("fair") {
+            // Clear: Vibrant blue and yellow
+            colors = [Color.blue, Color.yellow]
+            
+        } else {
+            // Clouds/Default: Gray and darker gray
+            colors = [Color(white: 0.6), Color(white: 0.3)]
+        }
+        
+        return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            .ignoresSafeArea()
+    }
+}
+
+// MARK: - Reusable Weather Info
+// We split the "Info" from the "Background" so the Medium widget can reuse it cleanly.
+struct WeatherInfoView: View {
+    let data: WidgetWeatherData
+    let useLargeTemp: Bool
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Image(systemName: data.sfSymbol)
+                    .renderingMode(.original)
+                    .font(.system(size: useLargeTemp ? 32 : 32))
+                    .shadow(color: .black.opacity(0.2), radius: 4)
+                
+                Spacer()
+                
+                if (data.windGusts ?? 0) >= 35 {
+                    Image(systemName: "wind")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.yellow)
+                        .shadow(radius: 2)
+                }
+            }
+            
+            Spacer()
+            
+            Text("\(Int(data.temperature.rounded()))°")
+                .font(.system(size: useLargeTemp ? 42 : 36, weight: .medium, design: .rounded))
+                .shadow(color: .black.opacity(0.1), radius: 2)
+            
+            if let accum = data.accumDisplayString, !accum.isEmpty {
+                HStack(spacing: 8) {
+                    Text(accum)
+                        .font(.system(size: 13, weight: .heavy))
+                        .foregroundStyle(.cyan)
+                        .shadow(color: .black.opacity(0.2), radius: 1)
+                    
+                    Text(String(data.high) + "˚ | " + String(data.low) + "˚")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                }
+            }
+            else {
+                Text("H:\(Int(data.high))°  L:\(Int(data.low))°")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
         }
     }
-}
-
-extension ConfigurationAppIntent {
-    fileprivate static var smiley: ConfigurationAppIntent {
-        let intent = ConfigurationAppIntent()
-        intent.favoriteEmoji = "😀"
-        return intent
-    }
-    
-    fileprivate static var starEyes: ConfigurationAppIntent {
-        let intent = ConfigurationAppIntent()
-        intent.favoriteEmoji = "🤩"
-        return intent
-    }
-}
-
-#Preview(as: .systemSmall) {
-    wildcat_NOAA_Weather_widgets()
-} timeline: {
-    SimpleEntry(date: .now, configuration: .smiley)
-    SimpleEntry(date: .now, configuration: .starEyes)
 }

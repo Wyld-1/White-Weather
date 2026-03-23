@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 import CoreLocation
 import Observation
 import MapKit
@@ -67,6 +68,7 @@ final class WeatherViewModel {
     var background: WeatherBackground = .sun
     var isLoading = false
     var errorMessage: String?
+    var activeLocationID: String?
 
     // Chart scaling
     var globalLow: Double = 0
@@ -74,7 +76,14 @@ final class WeatherViewModel {
     var dailyHigh: Double? { daily.first?.high }
     var dailyLow: Double? { daily.first?.low }
 
-    func load(coordinate: CLLocationCoordinate2D, skipGeocode: Bool = false, forceRefresh: Bool = false) async {
+    func load(
+        coordinate: CLLocationCoordinate2D,
+        locationID: String? = nil,
+        skipGeocode: Bool = false,
+        forceRefresh: Bool = false
+    ) async {
+        self.activeLocationID = locationID
+        
         if !forceRefresh,
            let last = lastFetchedCoordinate,
            abs(last.latitude - coordinate.latitude) < 0.01,
@@ -112,6 +121,11 @@ final class WeatherViewModel {
             calculateGlobalBounds(days: days)
             isLoading = false
             lastFetchTime = Date()
+            
+            updateWidget(id: activeLocationID ?? "current")
+            
+            isLoading = false
+            lastFetchTime = Date()
 
         } catch {
             errorMessage = "Failed to load weather: \(error.localizedDescription)"
@@ -119,15 +133,13 @@ final class WeatherViewModel {
         }
     }
 
-    // Hourly window: from the current floored hour through 11pm today.
+    // Hourly window: current floored hour through current hour + 12.
     private func hourlyWindow(from all: [HourlyForecast]) -> [HourlyForecast] {
         let cal = Calendar.current
         let now = Date()
-        let currentHour = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) ?? now
-        var endComponents = cal.dateComponents([.year, .month, .day], from: now)
-        endComponents.hour = 23
-        let endOfDay = cal.date(from: endComponents) ?? now
-        return all.filter { $0.time >= currentHour && $0.time <= endOfDay }
+        let start = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) ?? now
+        let end   = start.addingTimeInterval(12 * 3600)
+        return all.filter { $0.time >= start && $0.time <= end }
     }
 
     private func todayKey() -> String {
@@ -175,5 +187,35 @@ final class WeatherViewModel {
             self.globalLow = (minL - 2).rounded(.down)
             self.globalHigh = (maxH + 2).rounded(.up)
         }
+    }
+    
+    private func updateWidget(id: String) {
+        guard let cur = current, let firstDay = daily.first else { return }
+        
+        let widgetData = WidgetWeatherData(
+            id: id,
+            temperature: cur.temperature,
+            high: firstDay.high,
+            low: firstDay.low,
+            condition: cur.description,
+            sfSymbol: firstDay.daySymbol,
+            locationName: locationName,
+            windGusts: cur.windGusts,
+            isDay: cur.isDay,
+            accumDisplayString: firstDay.accumulation.displayString,
+            dayProse: firstDay.dayProse,
+            nightProse: firstDay.nightProse,
+            fetchedAt: Date()
+        )
+        
+        widgetData.save()
+        
+        // Also update the "registry" of names so the intent can see them
+        let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
+        var names = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
+        names[id] = locationName
+        defaults?.set(names, forKey: "saved_location_names")
+        
+        WidgetCenter.shared.reloadAllTimelines()
     }
 }

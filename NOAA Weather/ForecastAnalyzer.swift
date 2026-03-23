@@ -41,7 +41,7 @@ struct AccumulationRange {
         case (nil, nil):                    return ""
         case (nil, let h?):                 return "< \(fmt(h))\""
         case (let l?, nil):                 return "> \(fmt(l))\""
-        case (let l?, let h?) where l == h: return "~\(fmt(l))\""
+        case (let l?, let h?) where l == h: return "\(fmt(l))\"" // Removed ~ for cleaner look
         case (let l?, let h?):              return "\(fmt(l))–\(fmt(h))\""
         }
     }
@@ -52,11 +52,29 @@ struct AccumulationRange {
             : String(format: "%.1f", v)
     }
 
-    static func merge(_ a: AccumulationRange, _ b: AccumulationRange) -> AccumulationRange {
-        guard a.hasAccumulation || b.hasAccumulation else { return .none }
-        let lo = max(a.low  ?? 0, b.low  ?? 0)
-        let hi = max(a.high ?? 0, b.high ?? 0)
-        return AccumulationRange(low: lo > 0 ? lo : nil, high: hi > 0 ? hi : nil)
+    // Sum the bounds. Treat nil as 0 for the sake of addition.
+    static func + (lhs: AccumulationRange, rhs: AccumulationRange) -> AccumulationRange {
+        if !lhs.hasAccumulation { return rhs }
+        if !rhs.hasAccumulation { return lhs }
+
+        let newLow: Double?
+        if lhs.low == nil && rhs.low == nil {
+            newLow = nil
+        } else {
+            newLow = (lhs.low ?? 0) + (rhs.low ?? 0)
+        }
+
+        let newHigh: Double?
+        if lhs.high == nil && rhs.high == nil {
+            newHigh = nil
+        } else {
+            // Use the lower bound if a high bound is missing for one of the periods
+            let lHigh = lhs.high ?? lhs.low ?? 0
+            let rHigh = rhs.high ?? rhs.low ?? 0
+            newHigh = lHigh + rHigh
+        }
+
+        return AccumulationRange(low: newLow == 0 ? nil : newLow, high: newHigh)
     }
 
     static var none: AccumulationRange { AccumulationRange(low: nil, high: nil) }

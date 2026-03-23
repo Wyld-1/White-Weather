@@ -103,26 +103,29 @@ struct AddLocationPage: View {
                                 .labelStyle(.iconOnly)
                                 .foregroundStyle(.white)
                                 .font(.system(size: 50, weight: .ultraLight))
-                                .frame(width: 90, height: 90)
+                                .frame(width: 80, height: 80)
                         }
                         .buttonStyle(.glassProminent)
                         .tint(.blue)
                         .buttonBorderShape(.circle)
+                        .shadow(color: .blue.opacity(0.5), radius: 20)
                     } else {
-                        Button { showSearch = true } label: {
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color.accentColor)
-                                            .frame(width: 84, height: 84)
-                                            .shadow(color: .accentColor.opacity(0.5), radius: 20)
-                                        
-                                        Image(systemName: "plus")
-                                            .font(.system(size: 36, weight: .light))
-                                            .foregroundStyle(.white)
-                                    }
+                        Button {
+                            showSearch = true
+                        } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.accentColor)
+                                        .frame(width: 84, height: 84)
+                                        .shadow(color: .blue.opacity(0.5), radius: 20)
+                                    
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 36, weight: .light))
+                                        .foregroundStyle(.white)
                                 }
-                                .buttonStyle(.plain)
                             }
+                            .buttonStyle(.plain)
+                        }
                     }
                 .padding(.bottom, 120)
 

@@ -90,6 +90,7 @@ struct LocationPageView: View {
         Task {
             await viewModel.load(
                 coordinate: coord,
+                locationID: savedLocation?.id.uuidString,
                 skipGeocode: savedLocation != nil
             )
         }

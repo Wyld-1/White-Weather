@@ -122,8 +122,7 @@ struct OpenMeteoResponse: Decodable, Sendable {
 actor WeatherRepository {
     static let shared = WeatherRepository()
 
-    // Returns weather data immediately. The raw scraped periods are also returned
-    // so the caller can kick off AI analysis separately without blocking display.
+    // Returns weather data
     func fetchAll(lat: Double, lon: Double) async throws -> (
         CurrentConditions, [DailyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
     ) {
@@ -139,17 +138,24 @@ actor WeatherRepository {
         let tz     = TimeZone(secondsFromGMT: offset) ?? .current
 
         // Current conditions
-        // Use today's NOAA condition string for description if available
         let todayFmtKey: String = {
             let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = tz
             return f.string(from: Date())
         }()
-        let todayCondition = noaa[todayFmtKey]?.dayCondition ?? ""
+        
+        // --- FALLBACK LOGIC FOR MISSING "TODAY" ---
+        let noaaToday = noaa[todayFmtKey]
+        let dayCond = noaaToday?.dayCondition ?? ""
+        let nightCond = noaaToday?.nightCondition ?? ""
+        
+        // Use night condition if day is missing (standard for late afternoon)
+        let effectiveTodayCondition = !dayCond.isEmpty ? dayCond : nightCond
+        
         let c = om.current
-        // Extract clean label — handles both tombstone strings and prose fallbacks
-        let descriptionLabel = todayCondition.isEmpty
+        let descriptionLabel = effectiveTodayCondition.isEmpty
             ? wmoDescription(code: c.weatherCode, isDay: c.isDay == 1)
-            : extractConditionLabel(from: todayCondition)
+            : extractConditionLabel(from: effectiveTodayCondition)
+
         let current = CurrentConditions(
             temperature:        c.temperature2m,
             description:        descriptionLabel,
@@ -174,33 +180,34 @@ actor WeatherRepository {
             )
         }
 
-        // Daily
+        // Daily Parsing with Prose Fallback
         let dayFmt = localDateFormatter(format: "yyyy-MM-dd", tz: tz)
         let sunFmt = localDateFormatter(format: "yyyy-MM-dd'T'HH:mm", tz: tz)
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = tz
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = tz
 
         var dailyModels: [DailyForecast] = []
         for i in 0..<om.daily.time.count {
             let dateStr = om.daily.time[i]
-            guard let date = dayFmt.date(from: dateStr) else { continue }
-
-            let noaaData = noaa[dateStr]
-            let dayCode  = om.daily.weatherCode[i]
-
-            // Skip days where temps are null (end of forecast window)
-            guard let high = om.daily.temperature2mMax[i],
+            guard let date = dayFmt.date(from: dateStr),
+                  let high = om.daily.temperature2mMax[i],
                   let low  = om.daily.temperature2mMin[i] else { continue }
 
-            // SF symbol: NOAA condition string first, WMO code as fallback
-            let daySymbol = noaaSFSymbol(condition: noaaData?.dayCondition ?? "", isDay: true)
-                         ?? wmoSFSymbol(code: dayCode, isDay: true)
+            let noaaData = noaa[dateStr]
+            
+            // If today's day prose is missing, use tonight's prose as the main text
+            let effectiveDayProse = (i == 0 && (noaaData?.dayProse ?? "").isEmpty)
+                ? (noaaData?.nightProse ?? "Forecast unavailable")
+                : (noaaData?.dayProse ?? "")
+                
+            let effectiveDayCond = (i == 0 && (noaaData?.dayCondition ?? "").isEmpty)
+                ? (noaaData?.nightCondition ?? "")
+                : (noaaData?.dayCondition ?? "")
 
-            // Night symbol: only shown when isNightSevere;
-            // uses night condition string for accuracy
+            let daySymbol = noaaSFSymbol(condition: effectiveDayCond, isDay: i == 0 ? current.isDay : true)
+                         ?? wmoSFSymbol(code: om.daily.weatherCode[i], isDay: true)
+
             let nightSymbol: String? = noaaData?.isNightSevere == true
-                ? (noaaSFSymbol(condition: noaaData?.nightCondition ?? "", isDay: false)
-                   ?? nightSFSymbol(for: noaaData?.precipType ?? .none))
+                ? (noaaSFSymbol(condition: noaaData?.nightCondition ?? "", isDay: false) ?? "cloud.moon.fill")
                 : nil
 
             dailyModels.append(DailyForecast(
@@ -209,8 +216,8 @@ actor WeatherRepository {
                 high:            high,
                 low:             low,
                 precipProbability: noaaData?.precipChance ?? (om.daily.precipitationProbabilityMax[i] ?? 0),
-                shortForecast:   extractConditionLabel(from: noaaData?.condition ?? wmoDescription(code: dayCode, isDay: true)),
-                dayProse:        noaaData?.dayProse ?? "",
+                shortForecast:   extractConditionLabel(from: !effectiveDayCond.isEmpty ? effectiveDayCond : wmoDescription(code: om.daily.weatherCode[i], isDay: true)),
+                dayProse:        effectiveDayProse,
                 nightProse:      noaaData?.nightProse ?? "",
                 accumulation:    noaaData?.accumulation ?? .none,
                 precipType:      noaaData?.precipType ?? .none,
@@ -272,7 +279,7 @@ actor NOAAScraper {
 
         let doc = try SwiftSoup.parse(html)
 
-        // Step 1: Scrape tombstone condition strings ("Partly Sunny", "Chance Snow Showers", etc.)
+        // Scrape tombstone condition strings ("Partly Sunny", "Chance Snow Showers", etc.)
         // These come from the 7-day icon strip: <div class="tombstone-container"> <img title="..."> <p class="period-name">
         var tombstoneConditions: [String: String] = [:]  // periodName → condition
         for stone in try doc.select("div.tombstone-container") {
@@ -283,7 +290,7 @@ actor NOAAScraper {
             }
         }
 
-        // Step 2: Collect day/night prose from detailed forecast table
+        // Collect day/night prose from detailed forecast table
         struct RawDay {
             var dayLabel: String = ""
             var dayText:  String = ""
@@ -336,16 +343,17 @@ actor NOAAScraper {
             }
         }
 
-        // Step 3: Everything except isNightSevere — no model calls here.
-        // isNightSevere is patched in later by WeatherViewModel after display.
         var result: [String: ScrapedPeriod] = [:]
         for key in orderedKeys {
             guard let day = raw[key] else { continue }
 
-            let combined = day.dayText + " " + day.nightText
-            let accumulation = regexAccumRangeIsolated(from: combined)
+            let dayAccum = regexAccumRangeIsolated(from: day.dayText)
+            let nightAccum = regexAccumRangeIsolated(from: day.nightText)
+            let totalAccumulation = await dayAccum + nightAccum
 
-            let precipType = PrecipType.from(
+            let combined = day.dayText + " " + day.nightText
+
+            let precipType = await PrecipType.from(
                 dayCondition:   day.dayCondition,
                 nightCondition: day.nightCondition,
                 prose:          combined
@@ -357,15 +365,15 @@ actor NOAAScraper {
             )
 
             result[key] = ScrapedPeriod(
-                condition:      day.dayCondition.isEmpty ? day.dayLabel : day.dayCondition,
-                dayProse:       day.dayText,
-                nightProse:     day.nightText,
-                dayCondition:   day.dayCondition,
+                condition: day.dayCondition.isEmpty ? day.dayLabel : day.dayCondition,
+                dayProse: day.dayText,
+                nightProse: day.nightText,
+                dayCondition: day.dayCondition,
                 nightCondition: day.nightCondition,
-                accumulation:   accumulation,
-                precipType:     precipType,
-                isNightSevere:  isNightSevere,
-                precipChance:   day.precipChance
+                accumulation: totalAccumulation, // Summed value
+                precipType: precipType,
+                isNightSevere: isNightSevere,
+                precipChance: day.precipChance
             )
         }
         return result

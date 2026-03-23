@@ -12,7 +12,7 @@ import SwiftUI
 struct wildcat_NOAA_Weather_widgetsBundle: WidgetBundle {
     var body: some Widget {
         wildcat_NOAA_Weather_widgets()
-        wildcat_NOAA_Weather_widgetsControl()
-        wildcat_NOAA_Weather_widgetsLiveActivity()
+        //wildcat_NOAA_Weather_widgetsControl()
+        //wildcat_NOAA_Weather_widgetsLiveActivity()
     }
 }

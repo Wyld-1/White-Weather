@@ -5,6 +5,7 @@
 //  Created by Liam Lefohn on 3/23/26.
 //
 
+/*
 import ActivityKit
 import WidgetKit
 import SwiftUI
@@ -78,3 +79,4 @@ extension wildcat_NOAA_Weather_widgetsAttributes.ContentState {
     wildcat_NOAA_Weather_widgetsAttributes.ContentState.smiley
     wildcat_NOAA_Weather_widgetsAttributes.ContentState.starEyes
 }
+*/

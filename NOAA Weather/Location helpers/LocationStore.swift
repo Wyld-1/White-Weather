@@ -8,6 +8,7 @@
 
 import Foundation
 import CoreLocation
+import WidgetKit
 
 struct SavedLocation: Identifiable, Codable, Equatable {
     let id: UUID
@@ -21,18 +22,15 @@ struct SavedLocation: Identifiable, Codable, Equatable {
     }
 }
 
-// LocationStore.swift
-
 @Observable
 @MainActor
 final class LocationStore {
     private(set) var saved: [SavedLocation] = []
     var currentLocationName: String = "My Location"
     private let key = "savedLocations"
+    private let groupID = "group.weather.widgetinfo" // The shared App Group
 
     init() { load() }
-
-    // MARK: - Public API
 
     func add(_ location: SavedLocation) {
         guard !saved.contains(where: {
@@ -41,18 +39,35 @@ final class LocationStore {
         }) else { return }
         saved.append(location)
         persist()
+        syncToWidget() // Sync every time the list changes
     }
 
     func delete(_ location: SavedLocation) {
         saved.removeAll { $0.id == location.id }
         persist()
+        syncToWidget() // Sync every time the list changes
     }
 
-    // MARK: - Persistence
     private func persist() {
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: key)
         }
+    }
+
+    // Bridge app data to the widget view
+    private func syncToWidget() {
+        guard let defaults = UserDefaults(suiteName: groupID) else { return }
+        
+        // Map saved locations to a simple [ID: Name] dictionary
+        var registry: [String: String] = [:]
+        for loc in saved {
+            registry[loc.id.uuidString] = loc.name
+        }
+        
+        defaults.set(registry, forKey: "saved_location_names")
+        
+        // Tell the widgets to refresh their lists
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private func load() {
@@ -60,5 +75,6 @@ final class LocationStore {
               let decoded = try? JSONDecoder().decode([SavedLocation].self, from: data)
         else { return }
         saved = decoded
+        syncToWidget() // Ensure the widget registry is fresh on app launch
     }
 }
