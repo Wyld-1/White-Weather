@@ -36,16 +36,20 @@ struct wildcat_NOAA_Weather_widgetsEntryView : View {
     @Environment(\.widgetFamily) var family
     
     var body: some View {
-        switch family {
-        case .accessoryCircular:
-            LockScreenWidget(data: entry.data)
-        case .systemSmall:
-            SmallWidget(data: entry.data)
-        case .systemMedium:
-            MediumWidget(data: entry.data)
-        default:
-            SmallWidget(data: entry.data)
+        Group {
+            switch family {
+            case .accessoryCircular:
+                LockScreenWidget(data: entry.data)
+            case .systemSmall:
+                SmallWidget(data: entry.data)
+            case .systemMedium:
+                MediumWidget(data: entry.data)
+            default:
+                SmallWidget(data: entry.data)
+            }
         }
+        // Open the app to the same page as the widget showed, when tapped
+        .widgetURL(URL(string: "wildcat-weather://location/\(entry.data.id)"))
     }
 }
 
@@ -97,7 +101,6 @@ struct MediumWidget: View {
         HStack(spacing: 0) {
             WeatherInfoView(data: data, useLargeTemp: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                //.padding(.leading, 16)
             
             // Verticle divider
             Rectangle()
@@ -136,7 +139,7 @@ struct WidgetBackground: View {
             colors = [Color(white: 0.95), Color(white: 0.75)]
             
         } else if c.contains("rain") || c.contains("drizzle") || c.contains("storm") {
-            colors = [Color(white: 0.6), Color(white: 0.3)]
+            colors = [Color(red: 0.15, green: 0.2, blue: 0.3), Color(red: 0.35, green: 0.4, blue: 0.5)]
             
         } else if !isDay {
             colors = [Color(red: 0.02, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.1, blue: 0.25)]
@@ -145,7 +148,7 @@ struct WidgetBackground: View {
             colors = [Color.blue, Color.yellow]
             
         } else {
-            colors = [Color(red: 0.15, green: 0.2, blue: 0.3), Color(red: 0.35, green: 0.4, blue: 0.5)]
+            colors = [Color(white: 0.6), Color(white: 0.3)]
         }
         
         return LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -161,17 +164,34 @@ struct WeatherInfoView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if data.id == "current" {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.2), radius: 1)
+            }
+            else {
+                Image(systemName: "location.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0))
+            }
+            
             HStack(alignment: .top) {
+                let hasAlert = (data.windGusts ?? 0) >= 40
+                if !hasAlert {
+                    Spacer()
+                }
+                
                 Image(systemName: data.sfSymbol)
                     .renderingMode(.original)
-                    .font(.system(size: useLargeTemp ? 32 : 32))
+                    .font(.system(size: 40))
                     .shadow(color: .black.opacity(0.2), radius: 4)
                 
                 Spacer()
                 
-                if (data.windGusts ?? 0) >= 35 {
-                    Image(systemName: "wind")
-                        .font(.system(size: 14, weight: .bold))
+                if hasAlert {
+                    Image(systemName: "wind.circle.fill")
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundStyle(.yellow)
                         .shadow(radius: 2)
                 }
@@ -180,25 +200,30 @@ struct WeatherInfoView: View {
             Spacer()
             
             Text("\(Int(data.temperature.rounded()))°")
-                .font(.system(size: useLargeTemp ? 42 : 36, weight: .medium, design: .rounded))
-                .shadow(color: .black.opacity(0.1), radius: 2)
+                .font(.system(size: 42, weight: .medium, design: .rounded))
+                .shadow(color: .black.opacity(0.3), radius: 2)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.bottom, 6)
             
             if let accum = data.accumDisplayString, !accum.isEmpty {
                 HStack(spacing: 8) {
                     Text(accum)
-                        .font(.system(size: 13, weight: .heavy))
-                        .foregroundStyle(.cyan)
-                        .shadow(color: .black.opacity(0.2), radius: 1)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.cyan.opacity(0.9))
+                        .shadow(color: .white, radius: 1.5)
                     
-                    Text(String(data.high) + "˚ | " + String(data.low) + "˚")
+                    Text(String(Int(data.high)) + "˚ | " + String(Int(data.low)) + "˚")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white.opacity(0.9))
+                        .shadow(color: .black.opacity(0.4), radius: 1)
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             else {
                 Text("H:\(Int(data.high))°  L:\(Int(data.low))°")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.4), radius: 1)
             }
         }
     }

@@ -14,6 +14,9 @@ extension Notification.Name {
 struct NOAA_WeatherApp: App {
     @State private var locationStore = LocationStore()
     @State private var locationManager = LocationManager()
+    
+    // Track the ID of the location we want to display
+    @State private var selectedLocationID: String? = "current"
 
     init() {
         try? AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
@@ -22,9 +25,12 @@ struct NOAA_WeatherApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(selectedID: $selectedLocationID)
                 .environment(locationStore)
                 .environment(locationManager)
+                .onOpenURL { url in
+                    handleDeepLink(url)
+                }
                 .onAppear { locationManager.requestLocation() }
                 .onReceive(Timer.publish(every: 900, on: .main, in: .common).autoconnect()) { _ in
                     // Nudge GPS location (LocationPageView picks this up via .task)
@@ -34,4 +40,14 @@ struct NOAA_WeatherApp: App {
                 }
         }
     }
+    
+    private func handleDeepLink(_ url: URL) {
+    // Look for: wildcat-weather://location/{id}
+    guard url.scheme == "wildcat-weather",
+          url.host == "location",
+          let locationID = url.pathComponents.last else { return }
+    
+    // Update the state to switch the UI to this location
+    selectedLocationID = locationID
+}
 }

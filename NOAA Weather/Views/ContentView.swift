@@ -12,13 +12,17 @@ internal import _LocationEssentials
 struct ContentView: View {
     @Environment(LocationStore.self) private var store
     @Environment(LocationManager.self) private var locationManager
-    @State private var selectedTab: AnyHashable = AnyHashable(-1)
+    @Binding var selectedID: String?
 
+    // Helper to calculate total dots (Current + Saved + Add Page)
     private var pageCount: Int { 1 + store.saved.count + 1 }
+
+    // Helper to find which dot should be active based on the String ID
     private var currentIndex: Int {
-        if selectedTab == AnyHashable(-1) { return 0 }
-        if selectedTab == AnyHashable("add") { return pageCount - 1 }
-        if let idx = store.saved.firstIndex(where: { AnyHashable($0.id) == selectedTab }) {
+        if selectedID == "current" { return 0 }
+        if selectedID == "add" { return pageCount - 1 }
+        if let idString = selectedID,
+           let idx = store.saved.firstIndex(where: { $0.id.uuidString == idString }) {
             return idx + 1
         }
         return 0
@@ -26,19 +30,30 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            TabView(selection: $selectedTab) {
-                LocationPageView(savedLocation: nil).tag(AnyHashable(-1))
+            TabView(selection: $selectedID) {
+                // Current Location Page
+                LocationPageView(savedLocation: nil)
+                    .tag("current" as String?)
+
+                // Saved Location Pages
                 ForEach(store.saved) { loc in
-                    LocationPageView(savedLocation: loc).tag(AnyHashable(loc.id))
+                    LocationPageView(savedLocation: loc)
+                        .tag(loc.id.uuidString as String?)
                 }
+
+                // Add Location Page
                 AddLocationPage(onAdded: {
-                    if let newest = store.saved.last { selectedTab = AnyHashable(newest.id) }
-                }).tag(AnyHashable("add"))
+                    if let newest = store.saved.last {
+                        selectedID = newest.id.uuidString
+                    }
+                })
+                .tag("add" as String?)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
 
-            PageDotsView(count: pageCount, currentIndex: currentIndex).padding(.bottom, 8)
+            PageDotsView(count: pageCount, currentIndex: currentIndex)
+                .padding(.bottom, 8)
         }
         .onAppear { locationManager.requestLocation() }
     }
@@ -225,8 +240,20 @@ struct CurrentConditionsHeader: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            Text(locationName.isEmpty ? "—" : locationName)
-                .font(.system(size: 28, weight: .medium)).foregroundStyle(.white).shadow(radius: 4)
+            if locationName == "My Location" {
+                HStack {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 20, weight: .medium)).foregroundStyle(.white).shadow(radius: 4)
+                    
+                    Text(locationName.isEmpty ? "—" : locationName)
+                        .font(.system(size: 28, weight: .medium)).foregroundStyle(.white).shadow(radius: 4)
+                }
+            }
+            else {
+                Text(locationName.isEmpty ? "—" : locationName)
+                    .font(.system(size: 28, weight: .medium)).foregroundStyle(.white).shadow(radius: 4)
+            }
+            
             Text(current.map { "\(Int($0.temperature.rounded()))°" } ?? "—")
                 .font(.system(size: 96, weight: .thin)).foregroundStyle(.white).shadow(radius: 6)
             Text(current?.description ?? "")
@@ -927,4 +954,10 @@ struct CardHeader: View {
         Label(title, systemImage: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
     }
+}
+
+#Preview {
+    ContentView(selectedID: .constant("current"))
+        .environment(LocationStore())
+        .environment(LocationManager())
 }

@@ -23,16 +23,23 @@ struct LocationQuery: EntityQuery {
         return try await suggestedEntities().filter { identifiers.contains($0.id) }
     }
 
+    // In AppIntent.swift
+
     func suggestedEntities() async throws -> [LocationEntity] {
         let defaults = UserDefaults(suiteName: "group.weather.widgetinfo")
         let registry = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
-        
         let order = defaults?.stringArray(forKey: "ordered_location_ids") ?? []
-        
-        return order.compactMap { id in
+
+        // Start the list with a hardcoded "Current Location" entry
+        var list = [LocationEntity(id: "current", name: "Current Location")]
+
+        // Add saved locations following the app's order
+        list.append(contentsOf: order.compactMap { id in
             guard let name = registry[id] else { return nil }
             return LocationEntity(id: id, name: name)
-        }
+        })
+
+        return list
     }
 }
 
