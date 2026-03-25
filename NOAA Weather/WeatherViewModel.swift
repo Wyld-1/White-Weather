@@ -10,11 +10,11 @@ enum WeatherBackground {
     static func from(code: Int) -> WeatherBackground {
         switch code {
         case 71...77, 85, 86:                   return .snow
-        case 65, 66, 67, 82, 95...99:           return .rain      // heavy rain, freezing rain, thunderstorms
-        case 51...64, 80, 81:                   return .drizzle   // light drizzle, light/moderate rain, light showers
-        case 3, 45, 48:                         return .clouds    // overcast, fog
+        case 65, 66, 67, 82, 95...99:           return .rain         // heavy rain, freezing rain, thunderstorms
+        case 51...64, 80, 81:                   return .drizzle      // light drizzle, light/moderate rain, light showers
+        case 3, 45, 48:                         return .clouds       // overcast, fog
         case 1, 2:                              return .mostlySunny  // mainly clear, partly cloudy
-        default:                                return .sun       // code 0: clear sky
+        default:                                return .sun          // code 0: clear sky
         }
     }
 
@@ -115,7 +115,7 @@ final class WeatherViewModel {
         }
 
         do {
-            let (cur, days, sun, scrapedPeriods) = try await WeatherRepository.shared.fetchAll(
+            let (cur, days, allHours, sun, scrapedPeriods) = try await WeatherRepository.shared.fetchAll(
                 lat: coordinate.latitude,
                 lon: coordinate.longitude
             )
@@ -124,6 +124,8 @@ final class WeatherViewModel {
             current = cur
             daily   = days
             sunEvent = sun
+            
+            self.hourly = hourlyWindow(from: allHours)
 
             // Background + description from NOAA condition string, WMO code as fallback
             let todayCondition = scrapedPeriods[todayKey()]?.dayCondition ?? ""
@@ -152,7 +154,8 @@ final class WeatherViewModel {
         let cal = Calendar.current
         let now = Date()
         let start = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) ?? now
-        let end   = start.addingTimeInterval(12 * 3600)
+        let end = start.addingTimeInterval(12 * 3600)
+        
         return all.filter { $0.time >= start && $0.time <= end }
     }
 
@@ -224,7 +227,6 @@ final class WeatherViewModel {
         
         widgetData.save()
         
-        // Also update the "registry" of names so the intent can see them
         let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
         var names = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
         names[id] = locationName

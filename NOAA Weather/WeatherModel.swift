@@ -124,7 +124,7 @@ actor WeatherRepository {
 
     // Returns weather data
     func fetchAll(lat: Double, lon: Double) async throws -> (
-        CurrentConditions, [DailyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
+            CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
     ) {
         // Fetch Open-Meteo and NOAA concurrently. NOAA is best-effort.
         async let omTask   = OpenMeteoClient.shared.fetch(lat: lat, lon: lon)
@@ -215,7 +215,7 @@ actor WeatherRepository {
                 date:            date,
                 high:            high,
                 low:             low,
-                precipProbability: noaaData?.precipChance ?? (om.daily.precipitationProbabilityMax[i] ?? 0),
+                precipProbability: noaaData?.precipChance ?? 0,
                 shortForecast:   extractConditionLabel(from: !effectiveDayCond.isEmpty ? effectiveDayCond : wmoDescription(code: om.daily.weatherCode[i], isDay: true)),
                 dayProse:        effectiveDayProse,
                 nightProse:      noaaData?.nightProse ?? "",
@@ -233,7 +233,7 @@ actor WeatherRepository {
         let sunset  = sunFmt.date(from: om.daily.sunset.first  ?? "") ?? Date()
         let sun = SunEvent(sunrise: sunrise, sunset: sunset)
 
-        return (current, dailyModels, sun, noaa)
+        return (current, dailyModels, allHourly, sun, noaa)
     }
 
     // Returns an appropriate night SF Symbol based on precip type when severity is flagged.
@@ -384,11 +384,27 @@ actor NOAAScraper {
     }
 
     private func extractPrecipChance(from text: String) -> Int? {
-        let pattern = "Chance of precipitation is ([0-9]+)%"
+        // Catches:
+        // - "A 20 percent chance of rain"
+        // - "40% chance of snow"
+        // - "Chance of precipitation is 60%"
+        let pattern = "([0-9]+)\\s*(?:%|percent)\\s+chance|chance of [a-z ]+ is ([0-9]+)(?:%|\\s*percent)?"
+        
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return Int(text[range])
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else {
+            return nil
+        }
+        
+        // Check both potential capture groups (1 for prefix, 2 for suffix)
+        for i in 1...2 {
+            let nsRange = match.range(at: i)
+            if nsRange.location != NSNotFound,
+               let range = Range(nsRange, in: text) {
+                return Int(text[range])
+            }
+        }
+        
+        return nil
     }
 
     // Regex-based accumulation extraction. Only fires on snow/accumulation triggers.

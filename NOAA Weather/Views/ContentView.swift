@@ -471,21 +471,39 @@ struct DailyRow: View {
     var body: some View {
         HStack(spacing: 0) {
             Text(Calendar.current.isDateInToday(day.date) ? "Today" : dayName)
-                .font(.system(size: 17, weight: .medium)).foregroundStyle(.white).frame(width: 52, alignment: .leading)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 52, alignment: .leading)
 
             HStack(spacing: -4) {
-                Image(systemName: day.daySymbol).symbolRenderingMode(.multicolor).font(.system(size: 22)).frame(width: 28)
+                VStack {
+                    Image(systemName: day.daySymbol)
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 22))
+                        .frame(width: 36)
+                    
+                    if day.precipProbability >= 20 {
+                        HStack(spacing: 3) {
+                            Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
+                                .symbolRenderingMode(.multicolor)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.cyan)
+                            Text("\(day.precipProbability)%")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.cyan)
+                        }
+                        .frame(width: 36, alignment: .center)
+                    }
+                }
+                
                 if let nightSym = day.nightSymbol {
-                    Image(systemName: nightSym).symbolRenderingMode(.monochrome).foregroundStyle(.white.opacity(0.4)).font(.system(size: 16)).offset(y: 4).offset(x: 8)
+                    Image(systemName: nightSym)
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .font(.system(size: 18))
+                        .offset(x: 9)
                 }
             }.frame(width: 60, alignment: .leading)
-
-            if day.precipProbability >= 20 {
-                HStack(spacing: 3) {
-                    Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake").symbolRenderingMode(.multicolor).font(.system(size: 11)).foregroundStyle(.cyan)
-                    Text("\(day.precipProbability)%").font(.system(size: 12, weight: .medium)).foregroundStyle(Color(red: 0.4, green: 0.8, blue: 1.0))
-                }.frame(width: 48, alignment: .leading)
-            } else { Spacer().frame(width: 48) }
 
             Spacer()
 

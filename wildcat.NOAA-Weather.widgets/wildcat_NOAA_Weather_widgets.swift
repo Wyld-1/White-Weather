@@ -41,14 +41,13 @@ struct wildcat_NOAA_Weather_widgetsEntryView : View {
             case .accessoryCircular:
                 LockScreenWidget(data: entry.data)
             case .systemSmall:
-                SmallWidget(data: entry.data)
+                SmallWidget(entry: entry)
             case .systemMedium:
-                MediumWidget(data: entry.data)
+                MediumWidget(entry: entry)
             default:
-                SmallWidget(data: entry.data)
+                SmallWidget(entry: entry)
             }
         }
-        // Open the app to the same page as the widget showed, when tapped
         .widgetURL(URL(string: "wildcat-weather://location/\(entry.data.id)"))
     }
 }
@@ -87,22 +86,23 @@ struct LockScreenWidget: View {
 
 // MARK: - Small Widget
 struct SmallWidget: View {
-    let data: WidgetWeatherData
+    let entry: WeatherEntry
+    
     var body: some View {
-        WeatherInfoView(data: data, useLargeTemp: false)
+        WeatherInfoView(data: entry.data, refreshDate: entry.date, useLargeTemp: false)
             .foregroundStyle(.white)
     }
 }
 
 // MARK: - Medium Widget
 struct MediumWidget: View {
-    let data: WidgetWeatherData
+    let entry: WeatherEntry
+    
     var body: some View {
         HStack(spacing: 0) {
-            WeatherInfoView(data: data, useLargeTemp: true)
+            WeatherInfoView(data: entry.data, refreshDate: entry.date, useLargeTemp: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            // Verticle divider
             Rectangle()
                 .fill(.white.opacity(0.15))
                 .frame(width: 1)
@@ -113,7 +113,7 @@ struct MediumWidget: View {
                     .font(.system(size: 10, weight: .black))
                     .foregroundStyle(.white.opacity(0.5))
                 
-                Text(data.dayProse)
+                Text(entry.data.dayProse)
                     .foregroundStyle(.white)
                     .font(.system(size: 14, weight: .medium))
                     .lineLimit(5)
@@ -160,20 +160,31 @@ struct WidgetBackground: View {
 // We split the "Info" from the "Background" so the Medium widget can reuse it cleanly.
 struct WeatherInfoView: View {
     let data: WidgetWeatherData
+    let refreshDate: Date
     let useLargeTemp: Bool
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if data.id == "current" {
-                Image(systemName: "location.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.2), radius: 1)
-            }
-            else {
-                Image(systemName: "location.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0))
+            HStack {
+                if data.id == "current" {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.2), radius: 1)
+                }
+                else {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0))
+                }
+                
+                Spacer()
+                
+                #if DEBUG
+                Text(refreshDate, style: .time)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+                #endif
             }
             
             HStack(alignment: .top) {
@@ -210,7 +221,7 @@ struct WeatherInfoView: View {
                     Text(accum)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.cyan.opacity(0.9))
-                        .shadow(color: .white, radius: 1.5)
+                        .shadow(color: .black, radius: 1.5)
                     
                     Text(String(Int(data.low.rounded())) + "˚ | " + String(Int(data.high.rounded())) + "˚")
                         .font(.system(size: 13, weight: .bold))
@@ -220,7 +231,7 @@ struct WeatherInfoView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             else {
-                Text("L:\(Int(data.low.rounded()))°  H:\(Int(data.low.rounded()))°")
+                Text("L:\(Int(data.low.rounded()))°  H:\(Int(data.high.rounded()))°")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white.opacity(0.9))
                     .shadow(color: .black.opacity(0.4), radius: 1)
