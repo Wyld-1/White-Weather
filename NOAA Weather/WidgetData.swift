@@ -1,20 +1,23 @@
 // WidgetData.swift
-// Shared between the app and widget extension via App Group.
-// Written by the main app, read by the widgets.
+// White Weather
+//
+// Shared data model between the app and widget extension via App Group.
+// The main app writes; the widget reads.
 // App Group: group.weather.widgetinfo
 
 import Foundation
 import WidgetKit
 
 struct WidgetWeatherData: Codable {
-    let id: String // "current" or the UUID string
-    let lat: Double // Added to allow Widget to re-fetch
+    let id: String               // "current" or a SavedLocation UUID string
+    let lat: Double
     let lon: Double
     let temperature: Double
     let high: Double
     let low: Double
-    let condition: String
+    let condition: String        // Short condition label, e.g. "Mostly Sunny"
     let sfSymbol: String
+    let precipProbability: Int   // 0–100
     let locationName: String
     let windGusts: Double?
     let isDay: Bool
@@ -28,7 +31,6 @@ struct WidgetWeatherData: Codable {
     func save() {
         guard let defaults = UserDefaults(suiteName: Self.groupID),
               let data = try? JSONEncoder().encode(self) else { return }
-        // Save using a unique key for this location
         defaults.set(data, forKey: "weather-\(id)")
     }
 
@@ -41,6 +43,17 @@ struct WidgetWeatherData: Codable {
     }
 
     static var placeholder: WidgetWeatherData {
-        WidgetWeatherData(id: "current", lat: 0, lon: 0, temperature: 00, high: 00, low: 00, condition: "Mostly Sunny", sfSymbol: "xmark.octagon.fill", locationName: "Unkown", windGusts: 00, isDay: true, accumDisplayString: nil, dayProse: "Fetching...", nightProse: "Fetching...", fetchedAt: Date())
+        WidgetWeatherData(
+            id: "current", lat: 0, lon: 0,
+            temperature: 45, high: 52, low: 38,
+            condition: "Mostly Sunny", sfSymbol: "sun.max.fill",
+            precipProbability: 0,
+            locationName: "—",
+            windGusts: nil, isDay: true,
+            accumDisplayString: nil,
+            dayProse: "Fetching forecast...",
+            nightProse: "",
+            fetchedAt: Date()
+        )
     }
 }

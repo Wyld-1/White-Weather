@@ -774,104 +774,236 @@ struct SunOrbitalView: View {
 }
 
 // MARK: - Day Detail Sheet
+// Paged across the full 7-day forecast. Opens at the tapped day.
+// Swipe left = earlier day, swipe right = later day.
+// Date strip at top shows the current day centred with neighbours.
 
 struct DayDetailSheet: View {
-    let day: DailyForecast
+    let days: [DailyForecast]     // full 7-day array
+    let startIndex: Int           // which day to open on
     let globalLow: Double
     let globalHigh: Double
     @Environment(\.dismiss) private var dismiss
-    
-    private var fullDayName: String {
-        let f = DateFormatter(); f.dateFormat = "EEEE"
-        return f.string(from: day.date)
+    @State private var currentIndex: Int
+
+    init(days: [DailyForecast], startIndex: Int, globalLow: Double, globalHigh: Double) {
+        self.days = days
+        self.startIndex = startIndex
+        self.globalLow = globalLow
+        self.globalHigh = globalHigh
+        self._currentIndex = State(initialValue: startIndex)
     }
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color(.systemBackground).ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(fullDayName).font(.system(size: 24, weight: .semibold))
-                                HStack(spacing: 16) {
-                                    Label("\(Int(day.high.rounded()))°", systemImage: "arrow.up")
-                                        .font(.system(size: 17)).foregroundStyle(.orange)
-                                    Label("\(Int(day.low.rounded()))°", systemImage: "arrow.down")
-                                        .font(.system(size: 17)).foregroundStyle(.cyan)
-                                }
-                            }
-                            Spacer()
-                            Image(systemName: day.daySymbol).symbolRenderingMode(.multicolor).font(.system(size: 48))
-                        }
-                        .padding(.horizontal, 20).padding(.top, 8)
+            VStack(spacing: 0) {
+                DateStrip(days: days, currentIndex: $currentIndex)
+                    .padding(.top, 8)
 
-                        if !day.hourlyTemps.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("TEMPERATURE").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).padding(.horizontal, 4)
-                                InteractiveTempGraph(points: day.hourlyTemps, globalLow: globalLow, globalHigh: globalHigh).frame(height: 160)
-                            }
-                            .padding(16).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16)).padding(.horizontal, 16)
-                        }
-
-                        // Accumulation callout
-                        if day.accumulation.hasAccumulation {
-                            HStack(spacing: 8) {
-                                Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
-                                    .foregroundStyle(.cyan)
-                                Text("Accumulation: \(day.accumulation.displayString)")
-                                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.cyan)
-                            }
-                            .padding(.horizontal, 20)
-                        }
-
-                        // Day forecast prose
-                        if !day.dayProse.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: day.daySymbol)
-                                        .symbolRenderingMode(.multicolor)
-                                        .font(.system(size: 17))
-                                    Text("DAY")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text(day.dayProse)
-                                    .font(.system(size: 15)).foregroundStyle(.primary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(16)
-                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-                            .padding(.horizontal, 16)
-                        }
-
-                        // Night forecast prose
-                        if !day.nightProse.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: day.nightSymbol ?? "moon.stars.fill")
-                                        .symbolRenderingMode(.multicolor)
-                                        .font(.system(size: 17))
-                                    Text("NIGHT")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                                Text(day.nightProse)
-                                    .font(.system(size: 15)).foregroundStyle(.primary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .padding(16)
-                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-                            .padding(.horizontal, 16)
-                        }
-                        Spacer(minLength: 32)
+                TabView(selection: $currentIndex) {
+                    ForEach(days.indices, id: \.self) { i in
+                        DayDetailPage(
+                            day: days[i],
+                            globalLow: globalLow,
+                            globalHigh: globalHigh
+                        )
+                        .tag(i)
                     }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut, value: currentIndex)
             }
+            .background(Color(.systemBackground))
+            .navigationTitle("Forecast")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
+    }
+}
+
+// MARK: - Date Strip
+// Shows the current day centred with up to 3 neighbours on each side. Tappable.
+
+struct DateStrip: View {
+    let days: [DailyForecast]
+    @Binding var currentIndex: Int
+
+    private let shortDay: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE"; return f
+    }()
+    private let shortDate: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "d"; return f
+    }()
+
+    var body: some View {
+        // GeometryReader lets us measure the total width to calculate the slide math
+        GeometryReader { geo in
+            let totalWidth = geo.size.width
+            let cellWidth = totalWidth / CGFloat(days.count)
+            
+            VStack(spacing: 0) {
+                ZStack(alignment: .bottomLeading) {
+                    HStack(spacing: 0) {
+                        ForEach(days.indices, id: \.self) { i in
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    currentIndex = i
+                                }
+                            } label: {
+                                VStack(spacing: 3) {
+                                    Text(Calendar.current.isDateInToday(days[i].date) ? "Today" : shortDay.string(from: days[i].date))
+                                        .font(.system(size: 11, weight: .regular))
+                                        .foregroundStyle(.secondary)
+                                    Text(shortDate.string(from: days[i].date))
+                                        .font(.system(size: 17, weight: .regular))
+                                        .foregroundStyle(.primary)
+                                    
+                                    // Empty space to reserve room for the bar below
+                                    Color.clear.frame(height: 4)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.bottom, 5)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    
+                    // Sliding indicator bar
+                    Capsule()
+                        .fill(Color.cyan)
+                        .frame(width: 28, height: 4)
+                        // Math centers the 28pt bar within the current cell's width
+                        .offset(x: (CGFloat(currentIndex) * cellWidth) + (cellWidth / 2) - 14)
+                        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: currentIndex)
+                        .padding(.bottom, 4)
+                }
+                
+                Divider()
+            }
+        }
+        .frame(height: 60)
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Single Day Page (inside the paged TabView)
+
+struct DayDetailPage: View {
+    let day: DailyForecast
+    let globalLow: Double
+    let globalHigh: Double
+
+    private var fullDayName: String {
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f.string(from: day.date)
+    }
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+
+                // Header: day name, H/L, symbol
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(fullDayName).font(.system(size: 22, weight: .semibold))
+                        HStack(spacing: 16) {
+                            Label("\(Int(day.high.rounded()))°", systemImage: "arrow.up")
+                                .font(.system(size: 17))
+                                .foregroundStyle(.orange)
+                            Label("\(Int(day.low.rounded()))°", systemImage: "arrow.down")
+                                .font(.system(size: 17))
+                                .foregroundStyle(.cyan)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: day.daySymbol)
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 48))
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 16)
+
+                // Hourly temperature graph
+                if !day.hourlyTemps.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TEMPERATURE")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                        InteractiveTempGraph(points: day.hourlyTemps, globalLow: globalLow, globalHigh: globalHigh)
+                            .frame(height: 160)
+                    }
+                    .padding(16)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
+                    .padding(.horizontal, 16)
+                }
+
+                // Accumulation callout
+                if day.accumulation.hasAccumulation {
+                    HStack(spacing: 8) {
+                        Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
+                            .foregroundStyle(.cyan)
+                        Text("Accumulation: \(day.accumulation.displayString)")
+                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(.cyan)
+                    }
+                    .padding(.horizontal, 20)
+                }
+
+                // Day prose
+                if !day.dayProse.isEmpty {
+                    ForecastProseCard(symbol: day.daySymbol, label: "DAY", prose: day.dayProse)
+                        .padding(.horizontal, 16)
+                }
+
+                // Night prose
+                if !day.nightProse.isEmpty {
+                    ForecastProseCard(
+                        symbol: day.nightSymbol ?? "moon.stars.fill",
+                        label: "NIGHT",
+                        prose: day.nightProse
+                    )
+                    .padding(.horizontal, 16)
+                }
+
+                Spacer(minLength: 32)
+            }
+        }
+    }
+}
+
+// Reusable day/night prose block.
+struct ForecastProseCard: View {
+    let symbol: String
+    let label: String
+    let prose: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 17))
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(prose)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -887,21 +1019,37 @@ struct InteractiveTempGraph: View {
     private let bottomPad: CGFloat = 20
     private let sidePad: CGFloat = 8
 
+    // Coarse filtering
+    private var coarsePoints: [HourlyForecast] {
+        var seenHours = Set<String>()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMddHH"
+        
+        return points.filter { p in
+            let key = formatter.string(from: p.time)
+            if seenHours.contains(key) { return false }
+            seenHours.insert(key)
+            return true
+        }
+    }
+
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width; let h = geo.size.height
             let plotH = h - topPad - bottomPad; let plotW = w - 2 * sidePad
             let range = max(globalHigh - globalLow, 1)
-
-            let pts: [(CGFloat, CGFloat)] = points.enumerated().map { idx, p in
-                let x = sidePad + plotW * CGFloat(idx) / CGFloat(max(points.count - 1, 1))
+            
+            let displayPoints = coarsePoints
+            
+            let pts: [(CGFloat, CGFloat)] = displayPoints.enumerated().map { idx, p in
+                let x = sidePad + plotW * CGFloat(idx) / CGFloat(max(displayPoints.count - 1, 1))
                 let y = topPad + plotH * CGFloat(1 - (p.temperature - globalLow) / range)
                 return (x, y)
             }
 
             let hovIdx: Int? = dragX.map { dx in
                 let frac = (max(sidePad, min(w - sidePad, dx)) - sidePad) / plotW
-                return max(0, min(points.count - 1, Int((frac * CGFloat(points.count - 1)).rounded())))
+                return max(0, min(displayPoints.count - 1, Int((frac * CGFloat(displayPoints.count - 1)).rounded())))
             }
 
             ZStack(alignment: .topLeading) {
@@ -917,32 +1065,42 @@ struct InteractiveTempGraph: View {
                     Path { path in
                         path.move(to: CGPoint(x: pts[0].0, y: pts[0].1))
                         addCurve(to: &path, pts: pts)
-                    }.stroke(Color.orange.opacity(0.85), lineWidth: 2)
+                    }
+                    .stroke(Color.orange, lineWidth: 6)
                 }
 
-                ForEach(Array(points.enumerated()), id: \.offset) { idx, p in
-                    if idx % 3 == 0 {
-                        Text(hourLabel(p.time)).font(.system(size: 9)).foregroundStyle(.secondary)
+                ForEach(Array(displayPoints.enumerated()), id: \.offset) { idx, p in
+                    if idx % 4 == 0 {
+                        Text(hourLabel(p.time))
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
                             .position(x: pts[idx].0, y: h - bottomPad / 2)
                     }
                 }
 
                 if let idx = hovIdx, idx < pts.count {
-                    let px = pts[idx].0; let py = pts[idx].1; let temp = points[idx].temperature
+                    let px = pts[idx].0; let py = pts[idx].1; let temp = displayPoints[idx].temperature
                     Path { p in p.move(to: CGPoint(x: px, y: topPad)); p.addLine(to: CGPoint(x: px, y: topPad + plotH)) }
-                        .stroke(Color.white.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .stroke(Color.white.opacity(0.7), lineWidth: 5)
 
-                    Circle().fill(Color.orange).frame(width: 8, height: 8).position(x: px, y: py)
-                    Circle().fill(Color.white.opacity(0.9)).frame(width: 4, height: 4).position(x: px, y: py)
+                    Circle().fill(Color.orange)
+                        .frame(width: 12, height: 12)
+                        .position(x: px, y: py)
+                    Circle()
+                        .fill(Color.white.opacity(0.7))
+                        .frame(width: 5, height: 5)
+                        .position(x: px, y: py)
 
                     let bubbleX = min(max(px, 28), w - 28)
-                    Text("\(Int(temp.rounded()))°").font(.system(size: 13, weight: .semibold))
+                    Text("\(Int(temp.rounded()))°").font(.system(size: 13, weight: .bold))
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(.regularMaterial, in: Capsule()).position(x: bubbleX, y: py - 20)
+                        .background(.regularMaterial, in: Capsule()).position(x: bubbleX, y: py - 24)
                 }
             }
             .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { dragX = $0.location.x }.onEnded { _ in withAnimation(.easeOut(duration: 0.3)) { dragX = nil } })
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { dragX = $0.location.x }
+                .onEnded { _ in withAnimation(.easeOut(duration: 0.3)) { dragX = nil } })
         }
     }
 
@@ -953,7 +1111,10 @@ struct InteractiveTempGraph: View {
             path.addCurve(to: CGPoint(x: pts[i].0, y: pts[i].1), control1: cp1, control2: cp2)
         }
     }
-    private func hourLabel(_ d: Date) -> String { let f = DateFormatter(); f.dateFormat = "ha"; return f.string(from: d).lowercased() }
+    
+    private func hourLabel(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "ha"; return f.string(from: d).lowercased()
+    }
 }
 
 // MARK: - Utilities

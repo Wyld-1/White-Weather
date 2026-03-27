@@ -52,8 +52,9 @@ struct LocationPageView: View {
         }
         .sheet(item: $selectedDay) { day in
             DayDetailSheet(
-                day: day,
-                globalLow: viewModel.globalLow,
+                days:       Array(viewModel.daily.prefix(7)),
+                startIndex: viewModel.daily.prefix(7).firstIndex(where: { $0.id == day.id }) ?? 0,
+                globalLow:  viewModel.globalLow,
                 globalHigh: viewModel.globalHigh
             )
         }
@@ -79,18 +80,24 @@ struct LocationPageView: View {
 
     private func triggerFetch() {
         guard let coord = coordinate else { return }
-        
-        // If we are looking at a saved location, set its known name first
+
+        let locationID = savedLocation?.id.uuidString
+
         if let savedLoc = savedLocation {
             viewModel.setLocationName(savedLoc.name)
             viewModel.setSkiResort(savedLoc.isSkiResort)
         }
-        
-        // Now tell it to load the data. We pass skipGeocode = true
+
+        // Warm-start: populate the UI from cache before the network fetch.
+        // This makes tapping a widget feel instant — the app shows real data
+        // immediately while fresh data loads in the background.
+        let cacheID = locationID ?? "current"
+        viewModel.loadFromCache(id: cacheID)
+
         Task {
             await viewModel.load(
                 coordinate: coord,
-                locationID: savedLocation?.id.uuidString,
+                locationID: locationID,
                 skipGeocode: savedLocation != nil
             )
         }

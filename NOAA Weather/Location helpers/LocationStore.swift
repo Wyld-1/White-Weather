@@ -55,21 +55,7 @@ final class LocationStore {
     }
 
     private func syncToWidget() {
-        guard let defaults = UserDefaults(suiteName: groupID) else { return }
-        
-        var names: [String: String] = [:]
-        var coords: [String: String] = [:]
-        let orderedIDs = saved.map { $0.id.uuidString }
-        
-        for loc in saved {
-            names[loc.id.uuidString] = loc.name
-            coords[loc.id.uuidString] = "\(loc.latitude),\(loc.longitude)"
-        }
-        
-        defaults.set(names, forKey: "saved_location_names")
-        defaults.set(coords, forKey: "saved_location_coords")
-        defaults.set(orderedIDs, forKey: "ordered_location_ids")
-        
+        syncLocationRegistry()
         WidgetCenter.shared.reloadAllTimelines()
     }
 
@@ -78,6 +64,23 @@ final class LocationStore {
               let decoded = try? JSONDecoder().decode([SavedLocation].self, from: data)
         else { return }
         saved = decoded
-        syncToWidget() // Ensure the widget registry is fresh on app launch
+        // Sync location metadata (names/coords) but don't reload timelines on launch —
+        // the weather data itself isn't loaded yet, so widget data is unchanged.
+        syncLocationRegistry()
+    }
+
+    // Writes only the location list metadata (names, coords, order) to the shared container.
+    // Does not reload widget timelines — call syncToWidget() for that after data changes.
+    private func syncLocationRegistry() {
+        guard let defaults = UserDefaults(suiteName: groupID) else { return }
+        var names: [String: String] = [:]
+        var coords: [String: String] = [:]
+        for loc in saved {
+            names[loc.id.uuidString]  = loc.name
+            coords[loc.id.uuidString] = "\(loc.latitude),\(loc.longitude)"
+        }
+        defaults.set(names,               forKey: "saved_location_names")
+        defaults.set(coords,              forKey: "saved_location_coords")
+        defaults.set(saved.map { $0.id.uuidString }, forKey: "ordered_location_ids")
     }
 }
