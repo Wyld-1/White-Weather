@@ -38,11 +38,18 @@ struct LocationPageView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         WeatherContentView(viewModel: viewModel, selectedDay: $selectedDay)
                         
-                        if !isCurrentLocation { deleteButton }
+                        if !isCurrentLocation {
+                            deleteButton
+                        }
+                        
+                        Text("Weather provided by NOAA and Open Mateo")
+                            .font(.caption2)
+                            .foregroundStyle(.gray)
+                            .shadow(color: .black, radius: 3)
+                            .padding(.bottom, 60)
                     }
                     .refreshable {
                         guard let coord = coordinate else { return }
-                        // Detach so SwiftUI's task cancellation on scroll-snap doesn't cancel our network requests.
                         await Task.detached(priority: .userInitiated) {
                             await viewModel.load(coordinate: coord, forceRefresh: true)
                         }.value
@@ -83,6 +90,7 @@ struct LocationPageView: View {
 
         let locationID = savedLocation?.id.uuidString
 
+        viewModel.isCurrentLocation = savedLocation == nil
         if let savedLoc = savedLocation {
             viewModel.setLocationName(savedLoc.name)
             viewModel.setSkiResort(savedLoc.isSkiResort)
@@ -115,7 +123,7 @@ struct LocationPageView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         }
         .padding(.horizontal, 28)
-        .padding(.bottom, 80)
+        .padding(.bottom, 15)
     }
 }
 

@@ -1,8 +1,10 @@
-//
-//  LocationManager.swift
-//  NOAA Weather
-//
-//  CoreLocation wrapper that publishes the user's coordinate.
+/* LocationManager.swift
+ * White Weather
+ *
+ * Thin CoreLocation wrapper that publishes the user's current coordinate.
+ * Requests kilometer-level accuracy — sufficient for weather and avoids
+ * triggering the high-accuracy location prompt.
+ */
 
 import CoreLocation
 import Combine
@@ -22,6 +24,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
         manager.desiredAccuracy = kCLLocationAccuracyKilometer
     }
 
+    /* Requests a one-shot location update, or prompts for permission if not yet determined. */
     func requestLocation() {
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:

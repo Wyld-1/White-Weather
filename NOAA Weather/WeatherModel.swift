@@ -1,5 +1,10 @@
-// WeatherModel.swift
-// White Weather
+/* WeatherModel.swift
+ * White Weather
+ *
+ * Domain models, data fetching, and parsing pipeline.
+ * Data flows: Open-Meteo (numeric) + NOAA (prose/tombstones) → domain models.
+ * Both sources are fetched concurrently; NOAA is best-effort and degrades to WMO.
+ */
 
 import Foundation
 import SwiftSoup
@@ -14,26 +19,28 @@ struct HourlyForecast: Identifiable {
     let precipitationProbability: Int
 }
 
+/* A single calendar day in the 7-day forecast. */
 struct DailyForecast: Identifiable {
     let id: UUID
     let date: Date
     let high: Double
     let low: Double
     let precipProbability: Int
-    let shortForecast: String      // e.g. "Mostly Sunny", "Chance Snow Showers"
-    let dayProse: String           // Full NOAA day period text
-    let nightProse: String         // Full NOAA night period text
+    let shortForecast: String   // extracted condition label, e.g. "Mostly Sunny"
+    let dayProse: String        // full NOAA day period text
+    let nightProse: String      // full NOAA night period text
     let accumulation: AccumulationRange
     let precipType: PrecipType
-    let isNightSevere: Bool        // Day and night conditions are notably different
-    let daySymbol: String          // SF symbol for the day period
-    let nightSymbol: String?       // SF symbol for night — only set when isNightSevere
+    let isNightSevere: Bool     // day and night conditions are notably different
+    let daySymbol: String       // SF symbol for the day period
+    let nightSymbol: String?    // SF symbol for the night period — set whenever night prose exists
+    let rowNightSymbol: String? // night symbol shown in the 7-day row — only set when isNightSevere
     let hourlyTemps: [HourlyForecast]
 }
 
 struct CurrentConditions {
     let temperature: Double
-    let description: String        // NOAA condition string if available, else WMO
+    let description: String     // NOAA condition label if available, otherwise WMO description
     let windSpeed: Double
     let windGusts: Double
     let windDirection: Double
@@ -74,13 +81,13 @@ struct OpenMeteoResponse: Decodable, Sendable {
         let isDay: Int
         enum CodingKeys: String, CodingKey {
             case time
-            case weatherCode      = "weather_code"
-            case isDay            = "is_day"
-            case temperature2m    = "temperature_2m"
+            case weatherCode        = "weather_code"
+            case isDay              = "is_day"
+            case temperature2m      = "temperature_2m"
             case relativeHumidity2m = "relative_humidity_2m"
-            case windSpeed10m     = "wind_speed_10m"
-            case windGusts10m     = "wind_gusts_10m"
-            case windDirection10m = "wind_direction_10m"
+            case windSpeed10m       = "wind_speed_10m"
+            case windGusts10m       = "wind_gusts_10m"
+            case windDirection10m   = "wind_direction_10m"
         }
     }
 
@@ -91,8 +98,8 @@ struct OpenMeteoResponse: Decodable, Sendable {
         let precipitationProbability: [Int]
         enum CodingKeys: String, CodingKey {
             case time
-            case weatherCode             = "weather_code"
-            case temperature2m           = "temperature_2m"
+            case weatherCode              = "weather_code"
+            case temperature2m            = "temperature_2m"
             case precipitationProbability = "precipitation_probability"
         }
     }
@@ -100,15 +107,15 @@ struct OpenMeteoResponse: Decodable, Sendable {
     struct DailyBlock: Decodable {
         let time: [String]
         let weatherCode: [Int]
-        let temperature2mMax: [Double?]         // nullable at forecast boundary
+        let temperature2mMax: [Double?]          // nullable at forecast boundary
         let temperature2mMin: [Double?]
         let precipitationProbabilityMax: [Int?]
         let sunrise: [String]
         let sunset: [String]
         enum CodingKeys: String, CodingKey {
             case time, weatherCode = "weather_code", sunrise, sunset
-            case temperature2mMax           = "temperature_2m_max"
-            case temperature2mMin           = "temperature_2m_min"
+            case temperature2mMax            = "temperature_2m_max"
+            case temperature2mMin            = "temperature_2m_min"
             case precipitationProbabilityMax = "precipitation_probability_max"
         }
     }
@@ -116,9 +123,22 @@ struct OpenMeteoResponse: Decodable, Sendable {
 
 // MARK: - Weather Repository
 
+/* Orchestrates concurrent fetches from Open-Meteo and NOAAScraper,
+ * then assembles the full domain model set.
+ *
+ * NOAA data enriches the Open-Meteo baseline; if NOAA fails, all fields
+ * fall back to WMO codes with graceful degradation.
+ */
 actor WeatherRepository {
     static let shared = WeatherRepository()
 
+    /* Fetches all weather data for a coordinate.
+     *
+     * @param lat latitude
+     * @param lon longitude
+     * @return (current conditions, 7-day forecast, all hourly data, sun events, raw scraped periods)
+     * @throws if the Open-Meteo fetch fails (NOAA failure is non-fatal)
+     */
     func fetchAll(lat: Double, lon: Double) async throws -> (
         CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
     ) {
@@ -129,22 +149,21 @@ actor WeatherRepository {
         let noaa = (try? await noaaFetch) ?? [:]
         let tz   = TimeZone(secondsFromGMT: om.utcOffsetSeconds) ?? .current
 
-        let current  = buildCurrentConditions(om: om, noaa: noaa, tz: tz)
+        let current   = buildCurrentConditions(om: om, noaa: noaa, tz: tz)
         let allHourly = buildHourly(om: om, tz: tz)
         let (daily, sun) = buildDaily(om: om, noaa: noaa, allHourly: allHourly, tz: tz, current: current)
 
         return (current, daily, allHourly, sun, noaa)
     }
 
+    /* Builds current conditions, preferring the NOAA tombstone label over the WMO description. */
     private func buildCurrentConditions(
         om: OpenMeteoResponse,
         noaa: [String: NOAAScraper.ScrapedPeriod],
         tz: TimeZone
     ) -> CurrentConditions {
-        let todayKey = dateString(from: Date(), tz: tz)
-        let todayData = noaa[todayKey]
-
-        // Prefer day condition; fall back to tonight's if it's already afternoon
+        let todayData = noaa[dateString(from: Date(), tz: tz)]
+        // Prefer day condition; fall back to tonight's in late afternoon when day is gone
         let condition = [todayData?.dayCondition, todayData?.nightCondition]
             .compactMap { $0 }
             .first(where: { !$0.isEmpty }) ?? ""
@@ -165,19 +184,25 @@ actor WeatherRepository {
         )
     }
 
+    /* Parses the Open-Meteo hourly array into typed HourlyForecast values. */
     private func buildHourly(om: OpenMeteoResponse, tz: TimeZone) -> [HourlyForecast] {
         let fmt = localDateFormatter(format: "yyyy-MM-dd'T'HH:mm", tz: tz)
         return om.hourly.time.enumerated().compactMap { i, str in
             guard let date = fmt.date(from: str) else { return nil }
             return HourlyForecast(
-                time:                      date,
-                temperature:               om.hourly.temperature2m[i],
-                weatherCode:               om.hourly.weatherCode[i],
-                precipitationProbability:  om.hourly.precipitationProbability[i]
+                time:                     date,
+                temperature:              om.hourly.temperature2m[i],
+                weatherCode:              om.hourly.weatherCode[i],
+                precipitationProbability: om.hourly.precipitationProbability[i]
             )
         }
     }
 
+    /* Builds the 7-day DailyForecast array and the SunEvent for today.
+     *
+     * SF symbol resolution priority: NOAA tombstone → extracted prose label → WMO code.
+     * Tombstones are only available for days 1–5; days 6–7 fall through to prose extraction.
+     */
     private func buildDaily(
         om: OpenMeteoResponse,
         noaa: [String: NOAAScraper.ScrapedPeriod],
@@ -192,27 +217,48 @@ actor WeatherRepository {
         var days: [DailyForecast] = []
         for i in 0..<om.daily.time.count {
             let dateStr = om.daily.time[i]
-            guard let date  = dayFmt.date(from: dateStr),
-                  let high  = om.daily.temperature2mMax[i],
-                  let low   = om.daily.temperature2mMin[i] else { continue }
+            guard let date = dayFmt.date(from: dateStr),
+                  let high = om.daily.temperature2mMax[i],
+                  let low  = om.daily.temperature2mMin[i] else { continue }
 
-            let noaaData  = noaa[dateStr]
-            let wmoCode   = om.daily.weatherCode[i]
-            let isToday   = i == 0
+            let noaaData   = noaa[dateStr]
+            let wmoCode    = om.daily.weatherCode[i]
+            let isToday    = i == 0
 
-            // If today's day prose is missing (late afternoon), use tonight's
-            let dayProse  = (isToday && (noaaData?.dayProse ?? "").isEmpty)
+            // If today's day prose is absent (late afternoon), use tonight's
+            let dayProse = (isToday && (noaaData?.dayProse ?? "").isEmpty)
                 ? (noaaData?.nightProse ?? "") : (noaaData?.dayProse ?? "")
-            let dayCond   = (isToday && (noaaData?.dayCondition ?? "").isEmpty)
+            let dayCond  = (isToday && (noaaData?.dayCondition ?? "").isEmpty)
                 ? (noaaData?.nightCondition ?? "") : (noaaData?.dayCondition ?? "")
 
-            let daySymbol = noaaSFSymbol(condition: dayCond, isDay: isToday ? current.isDay : true)
-                         ?? wmoSFSymbol(code: wmoCode, isDay: true)
+            let isCurrentlyDay = isToday ? current.isDay : true
+            let daySymbol: String = {
+                if !dayCond.isEmpty {
+                    return noaaSFSymbol(condition: dayCond, isDay: isCurrentlyDay)
+                        ?? wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
+                }
+                if !dayProse.isEmpty {
+                    return noaaSFSymbol(condition: extractConditionLabel(from: dayProse), isDay: isCurrentlyDay)
+                        ?? wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
+                }
+                return wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
+            }()
 
-            let nightSymbol: String? = noaaData?.isNightSevere == true
-                ? (noaaSFSymbol(condition: noaaData?.nightCondition ?? "", isDay: false) ?? "cloud.moon.fill")
-                : nil
+            let nightCond  = noaaData?.nightCondition ?? ""
+            let nightProse = noaaData?.nightProse ?? ""
+            let nightSymbol: String? = {
+                if !nightCond.isEmpty {
+                    return noaaSFSymbol(condition: nightCond, isDay: false) ?? "cloud.moon.fill"
+                }
+                if !nightProse.isEmpty {
+                    return noaaSFSymbol(condition: extractConditionLabel(from: nightProse), isDay: false)
+                        ?? "moon.stars.fill"
+                }
+                return nil
+            }()
 
+            // rowNightSymbol gates the dual-symbol in the 7-day row to only dramatic contrasts
+            let rowNightSymbol: String? = noaaData?.isNightSevere == true ? nightSymbol : nil
             let condLabel = !dayCond.isEmpty ? dayCond : wmoDescription(code: wmoCode, isDay: true)
 
             days.append(DailyForecast(
@@ -229,6 +275,7 @@ actor WeatherRepository {
                 isNightSevere:    noaaData?.isNightSevere ?? false,
                 daySymbol:        daySymbol,
                 nightSymbol:      nightSymbol,
+                rowNightSymbol:   rowNightSymbol,
                 hourlyTemps:      allHourly.filter { cal.isDate($0.time, inSameDayAs: date) }
             ))
         }
@@ -249,21 +296,32 @@ actor WeatherRepository {
 
 // MARK: - NOAA Scraper
 
+/* Fetches and parses forecast.weather.gov for a given coordinate.
+ * Returns a dictionary keyed by "yyyy-MM-dd" date strings.
+ * Tombstone conditions are only available for the first ~5 periods;
+ * later periods rely on prose extraction for symbols.
+ */
 actor NOAAScraper {
     static let shared = NOAAScraper()
 
     struct ScrapedPeriod {
-        let condition: String       // display condition ("Partly Sunny")
+        let condition: String       // extracted display condition, e.g. "Partly Sunny"
         let dayProse: String
         let nightProse: String
-        let dayCondition: String
-        let nightCondition: String
+        let dayCondition: String    // tombstone condition for the day period
+        let nightCondition: String  // tombstone condition for the night period
         let accumulation: AccumulationRange
         let precipType: PrecipType
         let isNightSevere: Bool
         let precipChance: Int?
     }
 
+    /* Fetches and parses the NOAA forecast page for the given coordinate.
+     *
+     * @param lat latitude
+     * @param lon longitude
+     * @return dictionary of date key → ScrapedPeriod, or empty on parse failure
+     */
     func fetchProse(lat: Double, lon: Double) async throws -> [String: ScrapedPeriod] {
         let url = URL(string: "https://forecast.weather.gov/MapClick.php?lat=\(lat)&lon=\(lon)")!
         var req = URLRequest(url: url)
@@ -276,8 +334,9 @@ actor NOAAScraper {
         return try buildPeriods(doc, tombstones: tombstones)
     }
 
-    // MARK: Scraping
-
+    /* Scrapes the 7-day tombstone icon strip for period names and condition titles.
+     * Returns a lowercased period name → condition string map.
+     */
     private func scrapeTombstones(_ doc: Document) throws -> [String: String] {
         var result: [String: String] = [:]
         for stone in try doc.select("div.tombstone-container") {
@@ -290,6 +349,9 @@ actor NOAAScraper {
         return result
     }
 
+    /* Parses the detailed forecast table into RawDay structs keyed by date,
+     * then builds the final ScrapedPeriod map.
+     */
     private func buildPeriods(_ doc: Document, tombstones: [String: String]) throws -> [String: ScrapedPeriod] {
         struct RawDay {
             var dayLabel: String = ""
@@ -307,9 +369,9 @@ actor NOAAScraper {
         let dayFmt = DateFormatter(); dayFmt.dateFormat = "EEEE"
 
         for row in try doc.select("#detailed-forecast-body .row-forecast") {
-            let label = (try? row.select(".forecast-label").text()) ?? ""
-            let text  = (try? row.select(".forecast-text").text()) ?? ""
-            let lower = label.lowercased()
+            let label   = (try? row.select(".forecast-label").text()) ?? ""
+            let text    = (try? row.select(".forecast-text").text()) ?? ""
+            let lower   = label.lowercased()
             let isNight = lower.contains("night") || lower == "tonight"
 
             if !isNight {
@@ -347,7 +409,7 @@ actor NOAAScraper {
                 nightProse:     day.nightText,
                 dayCondition:   day.dayCondition,
                 nightCondition: day.nightCondition,
-                accumulation:   regexAccumRangeIsolated(from: day.dayText) + regexAccumRangeIsolated(from: day.nightText),
+                accumulation:   extractAccumulationRange(from: day.dayText) + extractAccumulationRange(from: day.nightText),
                 precipType:     PrecipType.from(dayCondition: day.dayCondition, nightCondition: day.nightCondition, prose: combined),
                 isNightSevere:  conditionsAreNightSevere(day: day.dayCondition, night: day.nightCondition),
                 precipChance:   day.precipChance
@@ -356,14 +418,16 @@ actor NOAAScraper {
         return result
     }
 
-    // MARK: Helpers
-
     private func dateKey(_ date: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date)
     }
 
+    /* Extracts a precipitation probability percentage from NOAA prose.
+     * Handles "A 20 percent chance of rain", "40% chance of snow", "Chance of precipitation is 60%".
+     *
+     * @return percentage as Int, or nil if not found
+     */
     private func extractPrecipChance(from text: String) -> Int? {
-        // Matches: "A 20 percent chance of rain", "40% chance of snow", "Chance of precipitation is 60%"
         let pattern = "([0-9]+)\\s*(?:%|percent)\\s+chance|chance of [a-z ]+ is ([0-9]+)(?:%|\\s*percent)?"
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
@@ -374,35 +438,45 @@ actor NOAAScraper {
         return nil
     }
 
-    // Accumulation regex — only fires when snow/ice trigger words are present.
-    private func regexAccumRangeIsolated(from text: String) -> AccumulationRange {
+    /* Extracts an accumulation range from NOAA prose using ordered regex patterns.
+     * Only fires when snow/ice trigger words are present; returns .none otherwise.
+     *
+     * @param text  prose text for a single day or night period
+     * @return AccumulationRange with bounds in inches
+     */
+    private func extractAccumulationRange(from text: String) -> AccumulationRange {
         let lower = text.lowercased()
         let triggers = ["snow", "accumulation", "flurr", "blizzard", "wintry mix", "sleet"]
         guard triggers.contains(where: { lower.contains($0) }) else { return .none }
 
-        // "Less than" fraction phrases — most specific first
+        // "Less than" English fraction phrases, most specific first
         if ["less than a quarter", "under a quarter", "less than 0.25"].contains(where: { lower.contains($0) })          { return AccumulationRange(low: nil, high: 0.25) }
         if ["less than a half", "less than half an", "under a half", "less than half inch", "less than 0.5", "under 0.5"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 0.5) }
         if ["less than three quarter", "less than 0.75", "under three quarter"].contains(where: { lower.contains($0) })  { return AccumulationRange(low: nil, high: 0.75) }
         if ["less than one inch", "less than an inch", "less than 1 inch", "under one inch", "under an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 1.0) }
 
-        if let hi = firstMatch("(?:less than|under) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)         { return AccumulationRange(low: nil, high: hi) }
-        if let hi = firstMatch("up to ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)                       { return AccumulationRange(low: nil, high: hi) }
+        if let hi = regexFirstCapture("(?:less than|under) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: nil, high: hi) }
+        if let hi = regexFirstCapture("up to ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)               { return AccumulationRange(low: nil, high: hi) }
         if ["around an inch", "around one inch", "about an inch", "near an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: 1.0, high: 1.0) }
-        if let v  = firstMatch("(?:around|about|near) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)       { return AccumulationRange(low: v, high: v) }
+        if let v = regexFirstCapture("(?:around|about|near) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
 
-        // "X to Y inches"
-        if let pair = firstMatch("([0-9]+(?:\\.[0-9]+)?)\\s+to\\s+([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text, groups: 2) {
+        if let pair = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+to\\s+([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text, groups: 2) {
             let parts = pair.components(separatedBy: "|")
             if parts.count == 2, let lo = Double(parts[0]), let hi = Double(parts[1]) { return AccumulationRange(low: lo, high: hi) }
         }
 
-        if let v  = firstMatch("([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text).flatMap(Double.init)                          { return AccumulationRange(low: v, high: v) }
+        if let v = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
         return .none
     }
 
-    // Returns the first capture group, or "g1|g2|..." when groups > 1.
-    private func firstMatch(_ pattern: String, in text: String, groups: Int = 1) -> String? {
+    /* Returns the first regex capture group as a string, or all groups joined by "|" when groups > 1.
+     *
+     * @param pattern  NSRegularExpression pattern with capture groups
+     * @param text     input string
+     * @param groups   number of capture groups to return (default 1)
+     * @return captured string(s) or nil on no match
+     */
+    private func regexFirstCapture(_ pattern: String, in text: String, groups: Int = 1) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
         else { return nil }
@@ -424,9 +498,17 @@ actor NOAAScraper {
 
 // MARK: - Open-Meteo Client
 
+/* Fetches the Open-Meteo forecast API for a coordinate.
+ * Returns temperatures in °F and wind in mph. Timezone is auto-detected.
+ */
 actor OpenMeteoClient {
     static let shared = OpenMeteoClient()
 
+    /* @param lat latitude
+     * @param lon longitude
+     * @return decoded OpenMeteoResponse
+     * @throws on network or decode failure
+     */
     func fetch(lat: Double, lon: Double) async throws -> OpenMeteoResponse {
         var c = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
         c.queryItems = [
@@ -447,25 +529,37 @@ actor OpenMeteoClient {
 
 // MARK: - Weather Category
 
-// Used to compare day vs. night conditions for isNightSevere.
+/* Broad sky/precipitation category used only for isNightSevere comparison.
+ * Not used for display — see PrecipType and noaaSFSymbol for that.
+ */
 enum WeatherCategory: Hashable {
     case clear, partlyCloudy, cloudy, fog, drizzle, rain, snow, storm
 }
 
+/* Classifies a NOAA condition string into a WeatherCategory.
+ * Uses the post-"then" segment for transitional conditions like "Chance Snow then Mostly Sunny".
+ */
 nonisolated func weatherCategory(from condition: String) -> WeatherCategory {
-    let c = (condition.lowercased().components(separatedBy: " then ").last ?? condition.lowercased())
-    if c.contains("thunder") || c.contains("tstm")                           { return .storm }
+    let c = condition.lowercased().components(separatedBy: " then ").last ?? condition.lowercased()
+    if c.contains("thunder") || c.contains("tstm")                            { return .storm }
     if c.contains("blizzard") || c.contains("heavy snow") || c.contains("snow") ||
-       c.contains("flurr") || c.contains("sleet") || c.contains("wintry mix") { return .snow }
-    if c.contains("heavy rain") || c.contains("shower") || c.contains("rain") { return .rain }
-    if c.contains("drizzle")                                                   { return .drizzle }
-    if c.contains("fog") || c.contains("mist")                                { return .fog }
-    if c.contains("overcast") || c.contains("cloudy")                         { return .cloudy }
+       c.contains("flurr") || c.contains("sleet") || c.contains("wintry mix")  { return .snow }
+    if c.contains("heavy rain") || c.contains("shower") || c.contains("rain")  { return .rain }
+    if c.contains("drizzle")                                                    { return .drizzle }
+    if c.contains("fog") || c.contains("mist")                                 { return .fog }
+    if c.contains("overcast") || c.contains("cloudy")                          { return .cloudy }
     if c.contains("partly sunny") || c.contains("partly cloudy") ||
-       c.contains("mostly cloudy")                                             { return .partlyCloudy }
+       c.contains("mostly cloudy")                                              { return .partlyCloudy }
     return .clear
 }
 
+/* Returns true when day and night conditions are dramatically different in a way
+ * worth surfacing to the user — e.g. sunny day + thunderstorm night, or blizzard day + clear night.
+ * Symmetric: either direction of contrast triggers the flag.
+ *
+ * @param day   tombstone condition string for the day period
+ * @param night tombstone condition string for the night period
+ */
 nonisolated func conditionsAreNightSevere(day: String, night: String) -> Bool {
     guard !night.isEmpty else { return false }
     let d = weatherCategory(from: day)
@@ -483,21 +577,25 @@ nonisolated func conditionsAreNightSevere(day: String, night: String) -> Bool {
     return severePairs.contains([d, n])
 }
 
-// MARK: - Condition String Helpers
+// MARK: - Condition Label Extraction
 
-// Extracts a short condition label from any NOAA string.
-// Handles tombstone strings ("Mostly Sunny") and prose ("Tonight: Mostly clear, with a low...").
-// Always returns title-cased output.
+/* Extracts a short condition label from any NOAA string.
+ * Works on both tombstone strings ("Mostly Sunny") and full prose
+ * ("Tonight: Mostly clear, with a low around 23. East wind...").
+ * Always returns title-cased output, e.g. "Mostly Clear".
+ *
+ * @param text  any NOAA condition or prose string
+ * @return short title-cased condition label
+ */
 nonisolated func extractConditionLabel(from text: String) -> String {
     guard !text.isEmpty else { return text }
     var working = text
 
-    // "Otherwise, mostly sunny" — use the "otherwise" clause
     if let range = working.lowercased().range(of: "otherwise, ") {
         working = String(working[range.upperBound...])
     }
 
-    // Strip period prefix: "Tonight: ", "Monday: ", "This Afternoon: "
+    // Strip period-name prefix: "Tonight: ", "Monday: " (≤2 words before the colon)
     if let colonRange = working.range(of: ": ") {
         let prefix = String(working[..<colonRange.lowerBound])
         if prefix.split(separator: " ").count <= 2 {
@@ -505,10 +603,8 @@ nonisolated func extractConditionLabel(from text: String) -> String {
         }
     }
 
-    // Cut at the first comma — everything after is temps, wind, etc.
     working = working.components(separatedBy: ",").first ?? working
 
-    // Cut at transitional phrases
     for keyword in [" becoming ", " then ", " before "] {
         if let range = working.lowercased().range(of: keyword) {
             working = String(working[..<range.lowerBound])
@@ -523,6 +619,7 @@ nonisolated func extractConditionLabel(from text: String) -> String {
 
 // MARK: - WMO Code Helpers
 
+/* Returns a human-readable description for an Open-Meteo WMO weather code. */
 nonisolated func wmoDescription(code: Int, isDay: Bool) -> String {
     switch code {
     case 0, 1:    return "Clear"
@@ -537,6 +634,9 @@ nonisolated func wmoDescription(code: Int, isDay: Bool) -> String {
     }
 }
 
+/* Returns an SF symbol name for an Open-Meteo WMO weather code.
+ * Used as a fallback when no NOAA condition string is available.
+ */
 nonisolated func wmoSFSymbol(code: Int, isDay: Bool) -> String {
     switch code {
     case 0, 1:    return isDay ? "sun.max.fill"       : "moon.stars.fill"
@@ -551,6 +651,7 @@ nonisolated func wmoSFSymbol(code: Int, isDay: Bool) -> String {
     }
 }
 
+/* Converts a wind direction in degrees to a cardinal/intercardinal compass label. */
 nonisolated func compassDirection(from degrees: Double) -> String {
     let dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]
     return dirs[Int((degrees + 11.25) / 22.5) % 16]

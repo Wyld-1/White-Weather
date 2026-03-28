@@ -3,6 +3,7 @@
 
 import WidgetKit
 import SwiftUI
+import CoreLocation
 
 // MARK: - Timeline Provider
 
@@ -21,12 +22,6 @@ struct Provider: AppIntentTimelineProvider {
         let now = Date()
         let cached = WidgetWeatherData.load(id: id)
 
-        // Use cache if it's less than 30 minutes old
-        if let cached, now.timeIntervalSince(cached.fetchedAt) < 1800 {
-            return Timeline(entries: [WeatherEntry(date: now, data: cached)],
-                            policy: .after(cached.fetchedAt.addingTimeInterval(1800)))
-        }
-
         // Resolve coordinates — from cache or from the location registry
         var lat = cached?.lat
         var lon = cached?.lon
@@ -43,6 +38,23 @@ struct Provider: AppIntentTimelineProvider {
             do {
                 let (cur, days, _, _, _) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
                 guard let firstDay = days.first else { throw URLError(.badServerResponse) }
+
+                // Geocode to get the nearest city name independently of the main app.
+                // Re-use the cached name if geocoding fails.
+                let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
+                let savedNames = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
+
+                // Fallback chain: Main App's Name -> Geocoder -> Old Cache
+                var resolvedName: String = "—"
+
+                if let appName = savedNames[id] {
+                    resolvedName = appName
+                } else if let geocoded = await geocodeCityName(lat: lat, lon: lon) {
+                    resolvedName = geocoded
+                } else {
+                    resolvedName = cached?.locationName ?? "—"
+                }
+
                 let fresh = WidgetWeatherData(
                     id:                 id,
                     lat:                lat,
@@ -53,7 +65,7 @@ struct Provider: AppIntentTimelineProvider {
                     condition:          cur.description,
                     sfSymbol:           firstDay.daySymbol,
                     precipProbability:  firstDay.precipProbability,
-                    locationName:       cached?.locationName ?? "—",
+                    locationName:       resolvedName,
                     windGusts:          cur.windGusts,
                     isDay:              cur.isDay,
                     accumDisplayString: firstDay.accumulation.displayString.isEmpty ? nil : firstDay.accumulation.displayString,
@@ -74,6 +86,18 @@ struct Provider: AppIntentTimelineProvider {
     }
 }
 
+/* Reverse-geocodes a coordinate to the nearest city name using CLGeocoder.
+ * Returns nil if geocoding fails, so the caller can fall back gracefully.
+ */
+private func geocodeCityName(lat: Double, lon: Double) async -> String? {
+    let location  = CLLocation(latitude: lat, longitude: lon)
+    let geocoder  = CLGeocoder()
+    guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else { return nil }
+    let city  = placemark.locality ?? ""
+    let state = placemark.administrativeArea ?? ""
+    return city.isEmpty ? (state.isEmpty ? nil : state) : city
+}
+
 struct WeatherEntry: TimelineEntry {
     let date: Date
     let data: WidgetWeatherData
@@ -92,6 +116,7 @@ struct wildcat_NOAA_Weather_widgets: Widget {
                 }
         }
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular])
+        .contentMarginsDisabled()
     }
 }
 
@@ -185,73 +210,89 @@ struct MediumWidget: View {
 
 struct WeatherInfoPanel: View {
     let data: WidgetWeatherData
-
     private var hasWindAlert: Bool { (data.windGusts ?? 0) >= 40 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Top row: location indicator + wind alert badge
-            HStack {
+            // Top bar holds location indicator + location name + alerts
+            HStack(spacing: 4) {
                 if data.id == "current" {
                     Image(systemName: "location.fill")
-                        .font(.system(size: 11))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.85))
                 }
+                
+                Text(data.locationName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                
                 Spacer()
+                
                 if hasWindAlert {
                     Image(systemName: "wind.circle.fill")
                         .font(.system(size: 20))
                         .foregroundStyle(.yellow)
                 }
             }
+            .shadow(color: .black.opacity(0.3), radius: 2)
+            
+            Spacer()
 
-            // SF symbol
-            Image(systemName: data.sfSymbol)
-                .renderingMode(.original)
-                .font(.system(size: 36))
-                .padding(.top, 2)
-                .frame(maxWidth: .infinity)
+            // Middle: SF symbol + precip
+            VStack(spacing: 4) {
+                Image(systemName: data.sfSymbol)
+                    .renderingMode(.original)
+                    .font(.system(size: 36))
+                    .frame(maxWidth: .infinity)
+                    .shadow(color: .black.opacity(0.3), radius: 2)
 
-            // Precip probability — shown when > 0
-            if data.precipProbability > 0 {
-                HStack(spacing: 3) {
-                    Image(systemName: "drop.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.cyan)
-                    Text("\(data.precipProbability)%")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.cyan)
+                if data.precipProbability > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.cyan)
+                        Text("\(data.precipProbability)%")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.cyan)
+                    }
+                    .shadow(color: .black.opacity(0.2), radius: 1)
                 }
-                .padding(.top, 4)
-                .padding(.bottom, -4)
-                .frame(maxWidth: .infinity)
             }
+            .padding(.top, 4)
 
             Spacer()
 
             // Current temperature
             Text("\(Int(data.temperature.rounded()))°")
                 .font(.system(size: 38, weight: .medium, design: .rounded))
-                .shadow(color: .black.opacity(0.3), radius: 2)
+                .shadow(color: .black.opacity(0.25), radius: 2)
                 .frame(maxWidth: .infinity)
-                .padding(.bottom, 4)
+
+            Spacer()
 
             // Accumulation or H/L
-            if let accum = data.accumDisplayString, !accum.isEmpty {
-                HStack(spacing: 4) {
-                    Text(accum)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.cyan.opacity(0.9))
-                    Text("\(Int(data.low.rounded()))° | \(Int(data.high.rounded()))°")
+            Group {
+                if let accum = data.accumDisplayString, !accum.isEmpty {
+                    HStack(spacing: 4) {
+                        Text(accum)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.cyan.opacity(0.9))
+                        Text("\(Int(data.low.rounded()))° | \(Int(data.high.rounded()))°")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    .shadow(color: .black.opacity(0.3), radius: 2)
+                } else {
+                    Text("L:\(Int(data.low.rounded()))°  H:\(Int(data.high.rounded()))°")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .shadow(color: .black.opacity(0.3), radius: 2)
                 }
-            } else {
-                Text("L:\(Int(data.low.rounded()))°  H:\(Int(data.high.rounded()))°")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
             }
         }
-        .padding(.horizontal, 4)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
     }
 }
 
@@ -277,9 +318,9 @@ struct WidgetBackground: View {
             return [Color(red: 0.02, green: 0.05, blue: 0.15), Color(red: 0.08, green: 0.10, blue: 0.25)]
         }
         if c.contains("clear") || c.contains("sunny") || c.contains("fair") {
-            return [Color(red: 0.20, green: 0.55, blue: 0.95), Color(red: 0.85, green: 0.75, blue: 0.40)]
+            return [Color(red: 0.20, green: 0.55, blue: 0.95), Color(red: 0.85, green: 0.75, blue: 0.50)]
         }
         // Cloudy / overcast / default
-        return [Color(white: 0.50), Color(white: 0.30)]
+        return [Color(white: 0.7), Color(white: 0.5)]
     }
 }
