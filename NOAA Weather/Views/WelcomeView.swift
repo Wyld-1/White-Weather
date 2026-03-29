@@ -1,8 +1,10 @@
 /* WelcomeView.swift
  * White Weather
  *
- * Shown once on first launch. Dismissed by tapping the button,
- * which sets a UserDefaults flag so it never appears again.
+ * Shown once on first launch. Lets the user pick their unit system and
+ * time format before entering the app. Choices are saved to AppSettings
+ * immediately so the first weather fetch uses the right units.
+ * Dismissed by tapping "Get Started", which sets the hasLaunched flag.
  */
 
 import SwiftUI
@@ -10,56 +12,145 @@ import SwiftUI
 struct WelcomeView: View {
     let onDismiss: () -> Void
 
+    @State private var unitSystem: UnitSystem  = AppSettings.shared.unitSystem
+    @State private var timeFormat: TimeFormat  = AppSettings.shared.timeFormat
+
     var body: some View {
         ZStack {
-            VideoBackgroundView(videoName: "sun").ignoresSafeArea()
-            
-            RadialGradient(stops: [.init(color: .blue.opacity(0.4), location: 0),
-                                   .init(color: .black.opacity(0.7), location: 0.8)],
-                           center: .bottom, startRadius: 10, endRadius: 600).ignoresSafeArea()
+            VideoBackgroundView(videoName: "sun")
+                .ignoresSafeArea()
 
-            VStack(spacing: 0) {
+            Color.black.opacity(0.5).ignoresSafeArea()
+
+            VStack(spacing: 28) {
                 Spacer()
 
-                // App icon + name
-                VStack(spacing: 16) {
-                    Image(systemName: "cloud.sun.fill")
-                        .symbolRenderingMode(.multicolor)
-                        .font(.system(size: 72, weight: .thin))
-                        .shadow(color: .black.opacity(0.3), radius: 12)
+                VStack(spacing: 8) {
+                    Image("Whiteout goggles")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: 100)
+                        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 10)
+                        .padding(.bottom, 20)
 
-                    Text("White Weather")
-                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                    Text("Whiteout Weather")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .tracking(-0.5)
                         .foregroundStyle(.white)
-                        .shadow(radius: 6)
 
-                    Text("Accurate forecasts from NOAA,\npresented the way they should be.")
-                        .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.75))
+                    Text("I'll get you on your way in no time!")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8))
                         .multilineTextAlignment(.center)
-                        .shadow(radius: 3)
+                        .lineSpacing(4)
                 }
 
                 Spacer()
                 Spacer()
 
-                // Dismiss button
+                VStack(spacing: 20) {
+                    SettingPicker(
+                        label: "Units",
+                        options: [("US", UnitSystem.us), ("Metric", UnitSystem.metric)],
+                        selection: $unitSystem
+                    )
+                    
+                    Divider().background(.white.opacity(0.3))
+                    
+                    SettingPicker(
+                        label: "Time",
+                        options: [("12-hour", TimeFormat.twelve), ("24-hour", TimeFormat.twentyFour)],
+                        selection: $timeFormat
+                    )
+                }
+                .padding(24)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(.white.opacity(0.2), lineWidth: 1)
+                )
+                .padding(.horizontal, 24)
+
                 Button(action: onDismiss) {
                     Text("Get Started")
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18)
-                                .stroke(.white.opacity(0.25), lineWidth: 1)
-                        )
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
                 }
-                .padding(.horizontal, 32)
-                .padding(.bottom, 56)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 35)
             }
+            
+            VStack {
+                Spacer()
+                Image("Whiteout")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 200)
+                    .padding(.leading, -230)
+                    .shadow(color: .black.opacity(1), radius: 10, y: 5)
+            }
+            .ignoresSafeArea()
+        }
+        .onChange(of: unitSystem) { AppSettings.shared.unitSystem = unitSystem }
+        .onChange(of: timeFormat) { AppSettings.shared.timeFormat = timeFormat }
+    }
+}
+
+private struct SettingPicker<T: Equatable>: View {
+    let label: String
+    let options: [(String, T)]
+    @Binding var selection: T
+    
+    @Namespace private var pickerTransition
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+            
+            Spacer()
+            
+            HStack(spacing: 0) {
+                ForEach(options, id: \.0) { title, value in
+                    let isSelected = selection == value
+                    
+                    Text(title)
+                        .font(.system(size: 13, weight: isSelected ? .bold : .medium))
+                        .foregroundStyle(isSelected ? .black : .white.opacity(0.7))
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(.white)
+                                    .matchedGeometryEffect(id: "activeBackground", in: pickerTransition)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                selection = value
+                            }
+                        }
+                }
+            }
+            .padding(4)
+            .frame(width: 180)
+            .background(.black.opacity(0.3))
+            .clipShape(Capsule())
         }
     }
+}
+
+#Preview {
+    WelcomeView(onDismiss: {})
+        .environmentObject(AppSettings.shared)
+        .preferredColorScheme(.dark)
 }

@@ -51,14 +51,15 @@ struct AccumulationRange {
 
     var hasAccumulation: Bool { low != nil || high != nil }
 
-    /* Returns a display string like "< 1\"", "2–4\"", "~2\"", "> 3\"". */
+    /* Returns a display string like "< 1\"", "2–4 cm", "> 3\"", using the active unit label. */
     var displayString: String {
+        let u = AppSettings.shared.accumUnit
         switch (low, high) {
         case (nil, nil):                    return ""
-        case (nil, let h?):                 return "< \(fmt(h))\""
-        case (let l?, nil):                 return "> \(fmt(l))\""
-        case (let l?, let h?) where l == h: return "\(fmt(l))\""
-        case (let l?, let h?):              return "\(fmt(l))–\(fmt(h))\""
+        case (nil, let h?):                 return "< \(fmt(h))\(u)"
+        case (let l?, nil):                 return "> \(fmt(l))\(u)"
+        case (let l?, let h?) where l == h: return "\(fmt(l))\(u)"
+        case (let l?, let h?):              return "\(fmt(l))–\(fmt(h))\(u)"
         }
     }
 

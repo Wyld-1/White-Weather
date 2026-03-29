@@ -156,7 +156,9 @@ actor WeatherRepository {
         return (current, daily, allHourly, sun, noaa)
     }
 
-    /* Builds current conditions, preferring the NOAA tombstone label over the WMO description. */
+    /* Builds current conditions, preferring the NOAA tombstone label over the WMO description.
+     * Applies unit conversions from AppSettings before returning, so all callers get display-ready values.
+     */
     private func buildCurrentConditions(
         om: OpenMeteoResponse,
         noaa: [String: NOAAScraper.ScrapedPeriod],
@@ -168,14 +170,15 @@ actor WeatherRepository {
             .compactMap { $0 }
             .first(where: { !$0.isEmpty }) ?? ""
 
+        let s = AppSettings.shared
         let c = om.current
         return CurrentConditions(
-            temperature:        c.temperature2m,
+            temperature:        s.temperature(c.temperature2m),
             description:        condition.isEmpty
                                     ? wmoDescription(code: c.weatherCode, isDay: c.isDay == 1)
                                     : extractConditionLabel(from: condition),
-            windSpeed:          c.windSpeed10m,
-            windGusts:          c.windGusts10m,
+            windSpeed:          s.windSpeed(c.windSpeed10m),
+            windGusts:          s.windSpeed(c.windGusts10m),
             windDirection:      c.windDirection10m,
             windDirectionLabel: compassDirection(from: c.windDirection10m),
             humidity:           c.relativeHumidity2m,
@@ -184,14 +187,17 @@ actor WeatherRepository {
         )
     }
 
-    /* Parses the Open-Meteo hourly array into typed HourlyForecast values. */
+    /* Parses the Open-Meteo hourly array into typed HourlyForecast values.
+     * Temperatures are converted to the active unit system before returning.
+     */
     private func buildHourly(om: OpenMeteoResponse, tz: TimeZone) -> [HourlyForecast] {
         let fmt = localDateFormatter(format: "yyyy-MM-dd'T'HH:mm", tz: tz)
+        let s   = AppSettings.shared
         return om.hourly.time.enumerated().compactMap { i, str in
             guard let date = fmt.date(from: str) else { return nil }
             return HourlyForecast(
                 time:                     date,
-                temperature:              om.hourly.temperature2m[i],
+                temperature:              s.temperature(om.hourly.temperature2m[i]),
                 weatherCode:              om.hourly.weatherCode[i],
                 precipitationProbability: om.hourly.precipitationProbability[i]
             )
@@ -214,6 +220,7 @@ actor WeatherRepository {
         let sunFmt = localDateFormatter(format: "yyyy-MM-dd'T'HH:mm", tz: tz)
         var cal = Calendar(identifier: .gregorian); cal.timeZone = tz
 
+        let s = AppSettings.shared
         var days: [DailyForecast] = []
         for i in 0..<om.daily.time.count {
             let dateStr = om.daily.time[i]
@@ -261,16 +268,26 @@ actor WeatherRepository {
             let rowNightSymbol: String? = noaaData?.isNightSevere == true ? nightSymbol : nil
             let condLabel = !dayCond.isEmpty ? dayCond : wmoDescription(code: wmoCode, isDay: true)
 
+            // Convert accumulation bounds to the active unit system
+            let convertedAccum: AccumulationRange = {
+                let raw = noaaData?.accumulation ?? .none
+                guard raw.hasAccumulation else { return .none }
+                return AccumulationRange(
+                    low:  s.accumulation(raw.low),
+                    high: s.accumulation(raw.high)
+                )
+            }()
+
             days.append(DailyForecast(
                 id:               UUID(),
                 date:             date,
-                high:             high,
-                low:              low,
+                high:             s.temperature(high),
+                low:              s.temperature(low),
                 precipProbability: noaaData?.precipChance ?? 0,
                 shortForecast:    extractConditionLabel(from: condLabel),
                 dayProse:         dayProse,
                 nightProse:       noaaData?.nightProse ?? "",
-                accumulation:     noaaData?.accumulation ?? .none,
+                accumulation:     convertedAccum,
                 precipType:       noaaData?.precipType ?? .none,
                 isNightSevere:    noaaData?.isNightSevere ?? false,
                 daySymbol:        daySymbol,

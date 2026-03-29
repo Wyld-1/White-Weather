@@ -2,15 +2,15 @@
 
 Accurate, fast, and beautiful, built directly around NOAA forecasts.
 
-### What Is This?
+### What is this?
 
-Put simply, **a weather app**. But not just any weather app.
+**NOAA weather** forecasts that just got **convient and beautiful**, that's what.
 
 White Weather was born out of simple frustration. When we're checking for a weekend powder day and all we see is a generic snowflake icon, or when we have to open a web browser just to find 1990s graphics, we decided we needed better data and a better way to see it.
 
 We took the gold standard of meteorological reporting — NOAA (National Oceanic and Atmospheric Administration) — and stripped away the clunky interface. The result is a high-performance, beautiful experience built for skiers, hikers, and anyone who wants the real deal from the experts.
 
----
+--
 
 ### Why White Weather?
 
@@ -21,20 +21,20 @@ We took the gold standard of meteorological reporting — NOAA (National Oceanic
 - **Seamless.** Widgets give you all the good stuff without a need to open the app. We know our way around iOS pretty well.
 - **Fast.** We beleive weather data shouldn't take longer to load than it takes to walk outside. White Weather is optimized for speed, getting you out the door faster.
 
----
+--
 
-### Want In?
+### Want in?
 
 Of course! Our Beta version will launch on **Apple TestFlight** in a couple of days. Simply download TestFlight, and check back here shortly for the testing pin.
 
----
+--
 
-### Weather Data
+### Weather data
 
 Provided by [NOAA](https://www.weather.gov) and [Open-Meteo](https://open-meteo.com).
 - **NOAA forecast.weather.gov**, of course. We take as much as possible from the pros, including all written forecasts, 7-day symbols, and accumulation percent and amount.
 - **Open-Meteo** we use as a background agent. You'll see this data in the hourly forecast, sunset/sunrise times, and wind data.
 
----
+--
 
-*Built for skiers, by skiers! Or just people who love good-looking accurate weather.*
+*Built for skiers, by skiers! Or if you just love good-looking and good-quality weather, we're here for you, too.*

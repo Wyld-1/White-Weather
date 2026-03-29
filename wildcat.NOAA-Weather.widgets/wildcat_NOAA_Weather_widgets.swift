@@ -210,7 +210,11 @@ struct MediumWidget: View {
 
 struct WeatherInfoPanel: View {
     let data: WidgetWeatherData
-    private var hasWindAlert: Bool { (data.windGusts ?? 0) >= 40 }
+    // 40 mph ≈ 64 kph — threshold scales with the stored (already-converted) value
+    private var hasWindAlert: Bool {
+        let threshold = AppSettings.shared.isMetric ? 64.0 : 40.0
+        return (data.windGusts ?? 0) >= threshold
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

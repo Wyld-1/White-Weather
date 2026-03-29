@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>StringsTable</key>
+	<string>Root</string>
+	<key>PreferenceSpecifiers</key>
+	<array>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>Title</key>
+			<string>Units</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>Title</key>
+			<string>Measurement System</string>
+			<key>Key</key>
+			<string>unitSystem</string>
+			<key>DefaultValue</key>
+			<string>us</string>
+			<key>Titles</key>
+			<array>
+				<string>US (°F, in)</string>
+				<string>Metric (°C, cm)</string>
+			</array>
+			<key>Values</key>
+			<array>
+				<string>us</string>
+				<string>metric</string>
+			</array>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>Title</key>
+			<string>Time</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>Title</key>
+			<string>Time Format</string>
+			<key>Key</key>
+			<string>timeFormat</string>
+			<key>DefaultValue</key>
+			<string>12</string>
+			<key>Titles</key>
+			<array>
+				<string>12-hour</string>
+				<string>24-hour</string>
+			</array>
+			<key>Values</key>
+			<array>
+				<string>12</string>
+				<string>24</string>
+			</array>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSGroupSpecifier</string>
+			<key>Title</key>
+			<string>Developer</string>
+			<key>FooterText</key>
+			<string>Only active in debug builds.</string>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSToggleSwitchSpecifier</string>
+			<key>Title</key>
+			<string>Reset App Data</string>
+			<key>Key</key>
+			<string>debugResetTrigger</string>
+			<key>DefaultValue</key>
+			<false/>
+		</dict>
+	</array>
+</dict>
+</plist>

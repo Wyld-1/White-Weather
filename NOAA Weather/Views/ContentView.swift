@@ -169,6 +169,7 @@ struct AddLocationPage: View {
 struct WeatherContentView: View {
     let viewModel: WeatherViewModel
     @Binding var selectedDay: DailyForecast?
+    @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         VStack(spacing: 12) {
@@ -184,10 +185,11 @@ struct WeatherContentView: View {
 
             // Versatile warning slot
             Group {
-                if let gusts = viewModel.current?.windGusts, gusts >= 40 {
+                let gustThreshold = settings.isMetric ? 64.0 : 40.0
+                if let gusts = viewModel.current?.windGusts, gusts >= gustThreshold {
                     WeatherAlertBanner(
                         title: viewModel.isSkiResort ? "Wind Hold Risk": "High Wind Alert",
-                        message: "Gusts up to \(Int(gusts.rounded())) mph",
+                        message: "Gusts up to \(Int(gusts.rounded())) \(settings.windUnit)",
                         tintColor: viewModel.isSkiResort ? .red: .yellow,
                         warningSymbol: "wind.circle.fill"
                     )
@@ -219,7 +221,8 @@ struct WeatherContentView: View {
                     onSelect: { day in
                         self.selectedDay = day
                     }
-                ).padding(.horizontal, 16)
+                )
+                .padding(.horizontal, 16)
             }
 
             if let cur = viewModel.current {
@@ -416,8 +419,10 @@ enum HourlySlot: Identifiable {
 struct SunEventCell: View {
     let time: Date
     let isRise: Bool
+    @EnvironmentObject private var settings: AppSettings
     private var timeLabel: String {
-        let f = DateFormatter(); f.dateFormat = "h:mma"
+        let f = DateFormatter()
+        f.dateFormat = settings.is24Hour ? "HH:mm" : "h:mma"
         return f.string(from: time).lowercased()
     }
     var body: some View {
@@ -439,10 +444,12 @@ struct SunEventCell: View {
 
 struct HourlyCell: View {
     let hour: HourlyForecast
+    @EnvironmentObject private var settings: AppSettings
     var timeLabel: String {
         let cal = Calendar.current
         if cal.isDateInToday(hour.time), cal.component(.hour, from: hour.time) == cal.component(.hour, from: Date()) { return "Now" }
-        let f = DateFormatter(); f.dateFormat = "ha"
+        let f = DateFormatter()
+        f.dateFormat = settings.is24Hour ? "HH" : "ha"
         return f.string(from: hour.time).lowercased()
     }
     var isDay: Bool { let h = Calendar.current.component(.hour, from: hour.time); return h >= 6 && h < 20 }
@@ -535,7 +542,7 @@ struct DailyRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.cyan)
                         }
-                        .frame(width: 36, alignment: .center)
+                        .frame(width: 40, alignment: .center)
                     }
                 }
                 
@@ -609,6 +616,7 @@ struct WindCard: View {
     let windGusts: Double
     let windDegrees: Double
     let windDirectionLabel: String
+    @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         GlassCard {
@@ -622,12 +630,12 @@ struct WindCard: View {
                     VStack(alignment: .leading, spacing: 0) {
                         WindStatRow(
                             label: "Wind",
-                            value: "\(Int(windSpeed.rounded())) mph"
+                            value: "\(Int(windSpeed.rounded())) \(settings.windUnit)"
                         )
                         Divider().background(.white.opacity(0.12))
                         WindStatRow(
                             label: "Gusts",
-                            value: "\(Int(windGusts.rounded())) mph"
+                            value: "\(Int(windGusts.rounded())) \(settings.windUnit)"
                         )
                         Divider().background(.white.opacity(0.12))
                         WindStatRow(
@@ -716,14 +724,21 @@ struct CompassRose: View {
 
 struct SunCard: View {
     let sunEvent: SunEvent
-    private let fmt: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
-    }()
+    @EnvironmentObject private var settings: AppSettings
+    private var fmt: DateFormatter {
+        settings.is24Hour
+            ? { let f = DateFormatter(); f.dateFormat = "HH:mm"; return f }()
+            : { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
+    }
 
     var body: some View {
         GlassCard {
             VStack(alignment: .leading, spacing: 0) {
-                let sunEventTime = " — " + fmt.string(from: sunEvent.nextTime).prefix(while: { $0 != " " }) + fmt.string(from: sunEvent.nextTime).suffix(2)
+                // Build the header time string. In 12-hour mode append AM/PM; in 24-hour just use the formatted time.
+                let rawTime = fmt.string(from: sunEvent.nextTime)
+                let sunEventTime = settings.is24Hour
+                    ? " — " + rawTime
+                    : " — " + rawTime.prefix(while: { $0 != " " }) + rawTime.suffix(2)
                 
                 CardHeader(icon: sunEvent.nextIsRise ? "sunrise.fill" : "sunset.fill",
                            title: sunEvent.nextIsRise ? "SUNRISE" + sunEventTime : "SUNSET" + sunEventTime)

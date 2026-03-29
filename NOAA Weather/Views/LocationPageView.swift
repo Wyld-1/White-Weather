@@ -76,11 +76,17 @@ struct LocationPageView: View {
         .task(id: coordinate?.latitude) {
             triggerFetch()
         }
-        // Refresh this saved location when the 15-min background timer fires
+        // Refresh on the 15-min timer and on settings changes (units, time format).
+        // skipGeocode only for saved locations whose name is already known.
         .onReceive(NotificationCenter.default.publisher(for: .refreshAllLocations)) { _ in
-            guard savedLocation != nil, let coord = coordinate else { return }
+            guard let coord = coordinate else { return }
             Task {
-                await viewModel.load(coordinate: coord, skipGeocode: true, forceRefresh: true)
+                await viewModel.load(
+                    coordinate: coord,
+                    locationID: savedLocation?.id.uuidString,
+                    skipGeocode: savedLocation != nil,
+                    forceRefresh: true
+                )
             }
         }
     }
