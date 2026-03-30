@@ -100,13 +100,23 @@ final class WeatherViewModel {
      */
     func loadFromCache(id: String) {
         guard let cached = WidgetWeatherData.load(id: id) else { return }
-        
-        // Don't overwrite ski resrot names
-        if id == "current" {
+
+        // Only set the location name from cache for saved locations whose name is
+        // already reliable. For the current location, the geocoder always runs
+        // and will overwrite this shortly — but pre-filling gives a name immediately
+        // while the geocode is in-flight (better than showing “—”).
+        // The geocoder result always wins, so a stale city name is only transient.
+        if locationName.isEmpty {
             locationName = cached.locationName
         }
-        background   = WeatherBackground.fromCondition(cached.condition)
-                    ?? WeatherBackground.from(code: 0)
+
+        // Only update the background if the cache has a real condition string.
+        // If the condition is empty (no cache or first launch), leave the background
+        // at its current value rather than snapping it to .sun via code 0.
+        if let bg = WeatherBackground.fromCondition(cached.condition) {
+            background = bg
+        }
+
         current = CurrentConditions(
             temperature:        cached.temperature,
             description:        cached.condition,
@@ -146,7 +156,11 @@ final class WeatherViewModel {
         isLoading = true
         errorMessage = nil
 
-        if !skipGeocode && locationName.isEmpty {
+        // For the current location (skipGeocode=false), always geocode — the coordinate
+        // may have changed since the cached name was written, and we never want to show
+        // a stale city name from a different location.
+        // For saved locations (skipGeocode=true), the name is already correct from LocationStore.
+        if !skipGeocode {
             Task { await geocodeLocationName(for: coordinate) }
         }
 
@@ -210,24 +224,40 @@ final class WeatherViewModel {
         let location = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
         let geocoder = CLGeocoder()
         guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else {
-            locationName = "Unknown"; return
+            if locationName.isEmpty { locationName = "Unknown" }
+            return
         }
         let city  = placemark.locality ?? ""
         let state = placemark.administrativeArea ?? ""
         locationName = city.isEmpty ? state : city
+        // Propagate the freshly-geocoded name to the widget's App Group so it
+        // always reflects the real current location, not a stale cached city.
+        saveCoordinates(id: "current", coord: coord)
     }
 
     /* Writes this location's coordinate to the shared App Group container
      * so the widget can re-fetch independently without the app being open.
+     *
+     * For the current GPS location (id == "current") the name is written to a
+     * dedicated key rather than the shared saved_location_names dictionary.
+     * This eliminates the read-modify-write race where concurrent saved-location
+     * fetches clobber the "current" entry in the shared dict.
      */
     private func saveCoordinates(id: String, coord: CLLocationCoordinate2D) {
         guard let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID) else { return }
         var coords = defaults.dictionary(forKey: "saved_location_coords") as? [String: String] ?? [:]
         coords[id] = "\(coord.latitude),\(coord.longitude)"
         defaults.set(coords, forKey: "saved_location_coords")
-        
-        var names = defaults.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
-        names[id] = locationName
-        defaults.set(names, forKey: "saved_location_names")
+
+        if id == "current" {
+            // Dedicated key — never touched by LocationStore or saved-location fetches.
+            defaults.set(locationName, forKey: "current_location_name")
+        } else {
+            // Saved locations: write into the shared dict as before.
+            // LocationStore.syncLocationRegistry() also manages this dict.
+            var names = defaults.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
+            names[id] = locationName
+            defaults.set(names, forKey: "saved_location_names")
+        }
     }
 }

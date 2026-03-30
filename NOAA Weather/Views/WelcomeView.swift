@@ -20,13 +20,13 @@ struct WelcomeView: View {
             VideoBackgroundView(videoName: "sun")
                 .ignoresSafeArea()
 
-            Color.black.opacity(0.5).ignoresSafeArea()
+            Color.black.opacity(0.4).ignoresSafeArea()
 
             VStack(spacing: 28) {
                 Spacer()
 
                 VStack(spacing: 8) {
-                    Image("Whiteout goggles")
+                    Image("WhiteoutGoggles")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(height: 100)
@@ -75,12 +75,15 @@ struct WelcomeView: View {
                 Button(action: { Haptics.shared.notification(.success); onDismiss() }) {
                     Text("Get Started")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
-                        .background(Color.white)
+                        .background(
+                            LinearGradient(colors: [Color(red: 0.82, green: 0.28, blue: 0.22), Color(red: 0.62, green: 0.13, blue: 0.13)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
                         .clipShape(Capsule())
-                        .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
+                        .shadow(color: Color(red: 0.62, green: 0.13, blue: 0.13).opacity(0.5), radius: 12, y: 5)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 35)

@@ -40,19 +40,20 @@ struct LocationPageView: View {
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         WeatherContentView(viewModel: viewModel, selectedDay: $selectedDay)
-                        
-                        if !isCurrentLocation {
-                            deleteButton
+                        if !viewModel.daily.isEmpty {
+                            if !isCurrentLocation {
+                                deleteButton
+                            }
+                            #if DEBUG
+                            debugResetButton
+                            #endif
+
+                            Text("Weather provided by NOAA and Open-Meteo")
+                                .font(.caption2)
+                                .foregroundStyle(.gray)
+                                .shadow(color: .black, radius: 3)
+                                .padding(.bottom, 60)
                         }
-                        #if DEBUG
-                        debugResetButton
-                        #endif
-                        
-                        Text("Weather provided by NOAA and Open Mateo")
-                            .font(.caption2)
-                            .foregroundStyle(.gray)
-                            .shadow(color: .black, radius: 3)
-                            .padding(.bottom, 60)
                     }
                     .refreshable {
                         guard let coord = coordinate else { return }
@@ -127,12 +128,20 @@ struct LocationPageView: View {
         Button(role: .destructive) {
             showDeleteConfirm = true
         } label: {
-            Text("Delete Location")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundColor(.red)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            HStack(spacing: 4) {
+                Image(systemName: "trash.fill")
+                    .foregroundStyle(.red)
+                Text("Delete Location")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.red)
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 8)
@@ -143,12 +152,20 @@ struct LocationPageView: View {
         Button {
             showDebugReset = true
         } label: {
-            Text("Reset App Data")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(.orange)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            HStack(spacing: 4) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                    .foregroundStyle(.orange)
+                Text("Reset App Data")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.orange)
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
         }
         .padding(.horizontal, 28)
         .padding(.bottom, 15)
@@ -181,9 +198,11 @@ struct ErrorView: View {
     
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(.yellow)
+            Image("WhiteoutSleeping")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: 200)
+                .padding(.vertical, 10)
             Text(message)
                 .font(.system(size: 15))
                 .foregroundStyle(.white)

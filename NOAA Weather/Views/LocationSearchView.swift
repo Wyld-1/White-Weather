@@ -18,7 +18,9 @@ final class LocationCompleter: NSObject, MKLocalSearchCompleterDelegate {
     override init() {
         super.init()
         completer.delegate = self
-        completer.resultTypes = [.address, .pointOfInterest]
+        // Restrict to addresses only — .pointOfInterest surfaces businesses,
+        // restaurants, shops, etc. which are useless for a weather app.
+        completer.resultTypes = [.address]
     }
 
     func search(_ query: String) {
@@ -27,7 +29,16 @@ final class LocationCompleter: NSObject, MKLocalSearchCompleterDelegate {
     }
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        results = completer.results
+        // Drop street-level results ("123 Main St") — keep only city/region/zip entries.
+        // A result is street-level when its title starts with a digit (house number)
+        // or its subtitle contains a comma after the first token ("City, State" is fine;
+        // "123 Street, City, State" is not).
+        results = completer.results.filter { completion in
+            let title = completion.title
+            // Reject if the title starts with a digit (street address number)
+            if let first = title.first, first.isNumber { return false }
+            return true
+        }
     }
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         results = []
@@ -52,7 +63,7 @@ struct LocationSearchView: View {
                 // Search Bar
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("City, zip code, or ski resort...", text: $query)
+                    TextField("City, town, or ski resort...", text: $query)
                         .focused($fieldFocused)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
@@ -67,7 +78,7 @@ struct LocationSearchView: View {
                     ProgressView().padding(.top, 32); Spacer()
                 } else if query.isEmpty {
                     Spacer()
-                    Text("Search for a city, zip code,\nor ski resort").font(.system(size: 15)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Text("Search for a city, town,\nor ski resort").font(.system(size: 15)).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Spacer()
                 } else {
                     List {
@@ -80,7 +91,7 @@ struct LocationSearchView: View {
                             }
                         }
                         if !completer.results.isEmpty {
-                            Section("Cities & Places") {
+                            Section("Cities & Towns") {
                                 ForEach(completer.results, id: \.self) { completion in
                                     MapResultRow(completion: completion) {
                                         Task { await resolveAndAdd(completion) }

@@ -44,10 +44,19 @@ struct Provider: AppIntentTimelineProvider {
                 let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
                 let savedNames = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
 
-                // Fallback chain: Main App's Name -> Geocoder -> Old Cache
+                // Fallback chain for current location:
+                //   1. Dedicated "current_location_name" key (written by main app geocoder,
+                //      never clobbered by saved-location fetches)
+                //   2. Widget's own geocoder (runs independently in the extension)
+                //   3. Stale widget cache
+                // For saved locations: saved_location_names dict -> geocoder -> stale cache.
                 var resolvedName: String = "—"
 
-                if let appName = savedNames[id] {
+                if id == "current",
+                   let dedicatedName = defaults?.string(forKey: "current_location_name"),
+                   !dedicatedName.isEmpty {
+                    resolvedName = dedicatedName
+                } else if let appName = savedNames[id], !appName.isEmpty {
                     resolvedName = appName
                 } else if let geocoded = await geocodeCityName(lat: lat, lon: lon) {
                     resolvedName = geocoded
@@ -203,9 +212,10 @@ struct MediumWidget: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
-            .padding(.top, 2)
+            .padding(.top, 4)
         }
         .foregroundStyle(.white)
+        .padding(.top, 4)
     }
 }
 
@@ -257,10 +267,10 @@ struct WeatherInfoPanel: View {
                     HStack(spacing: 3) {
                         Image(systemName: "drop.fill")
                             .font(.system(size: 9))
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(Color(red: 0.82, green: 0.28, blue: 0.22))
                         Text("\(data.precipProbability)%")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.cyan)
+                            .foregroundStyle(Color(red: 0.82, green: 0.28, blue: 0.22))
                     }
                     .shadow(color: .black.opacity(0.2), radius: 1)
                 }

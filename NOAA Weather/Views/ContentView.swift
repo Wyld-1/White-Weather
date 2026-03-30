@@ -88,7 +88,8 @@ struct PageDotsView: View {
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 10)
-        .background(.black.opacity(0.6), in: Capsule())
+        .background(.thinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
     }
 }
 
@@ -180,9 +181,10 @@ struct WeatherContentView: View {
                 isCurrentLocation: viewModel.isCurrentLocation,
                 current:           viewModel.current,
                 high:              viewModel.daily.first?.high,
-                low:               viewModel.daily.first?.low
+                low:               viewModel.daily.first?.low,
+                isLoading:         viewModel.daily.isEmpty
             )
-            .padding(.top, 60)
+            .padding(.top, 15)
             .padding(.bottom, 4)
 
             // Versatile warning slot
@@ -202,47 +204,59 @@ struct WeatherContentView: View {
             }
             .padding(.bottom, 4)
 
-            // Hourly Forecast
-            if !viewModel.hourly.isEmpty {
-                HourlyCard(
-                    hours: viewModel.hourly,
-                    dayProse: viewModel.daily.first?.dayProse,
-                    sunEvent: viewModel.sunEvent
-                )
-                .padding(.horizontal, 16)
-                .onTapGesture {
-                    if let today = viewModel.daily.first {
-                        Haptics.shared.impact(.light)
-                        selectedDay = today
+            if viewModel.daily.isEmpty {
+                // Warm start state
+                VStack(spacing: 30) {
+                    Image("WhiteoutSearching")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: 250)
+                        .padding(.vertical, 50)
+                }
+                .transition(.opacity)
+            } else {
+                // Hourly Forecast
+                if !viewModel.hourly.isEmpty {
+                    HourlyCard(
+                        hours: viewModel.hourly,
+                        dayProse: viewModel.daily.first?.dayProse,
+                        sunEvent: viewModel.sunEvent
+                    )
+                    .padding(.horizontal, 16)
+                    .onTapGesture {
+                        if let today = viewModel.daily.first {
+                            Haptics.shared.impact(.light)
+                            selectedDay = today
+                        }
                     }
                 }
-            }
-
-            if !viewModel.daily.isEmpty {
-                DailyCard(
-                    days: viewModel.daily,
-                    globalLow: viewModel.globalLow,
-                    globalHigh: viewModel.globalHigh,
-                    onSelect: { day in
-                        self.selectedDay = day
-                    }
-                )
-                .padding(.horizontal, 16)
-            }
-
-            if let cur = viewModel.current {
-                WindCard(
-                    windSpeed: cur.windSpeed,
-                    windGusts: cur.windGusts,
-                    windDegrees: cur.windDirection,
-                    windDirectionLabel: cur.windDirectionLabel
-                )
-                .padding(.horizontal, 16)
-            }
-            
-            if let sun = viewModel.sunEvent {
-                SunCard(sunEvent: sun)
+                
+                if !viewModel.daily.isEmpty {
+                    DailyCard(
+                        days: viewModel.daily,
+                        globalLow: viewModel.globalLow,
+                        globalHigh: viewModel.globalHigh,
+                        onSelect: { day in
+                            self.selectedDay = day
+                        }
+                    )
                     .padding(.horizontal, 16)
+                }
+                
+                if let cur = viewModel.current {
+                    WindCard(
+                        windSpeed: cur.windSpeed,
+                        windGusts: cur.windGusts,
+                        windDegrees: cur.windDirection,
+                        windDirectionLabel: cur.windDirectionLabel
+                    )
+                    .padding(.horizontal, 16)
+                }
+                
+                if let sun = viewModel.sunEvent {
+                    SunCard(sunEvent: sun)
+                        .padding(.horizontal, 16)
+                }
             }
 
             Spacer(minLength: 40)
@@ -258,46 +272,79 @@ struct CurrentConditionsHeader: View {
     let current: CurrentConditions?
     let high: Double?
     let low: Double?
+    let isLoading: Bool
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
-        VStack(spacing: 4) {
-            if isCurrentLocation {
-                HStack(spacing: 6) {
+        VStack(alignment: .leading) {
+            
+            // Location name row
+            HStack(spacing: 5) {
+                if isCurrentLocation {
                     Image(systemName: "location.fill")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(.white)
-                        .shadow(radius: 4)
-                    Text(locationName.isEmpty ? "—" : locationName)
-                        .font(.system(size: 28, weight: .medium))
-                        .foregroundStyle(.white)
-                        .shadow(radius: 4)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
                 }
-            } else {
                 Text(locationName.isEmpty ? "—" : locationName)
-                    .font(.system(size: 28, weight: .medium))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .shadow(radius: 4)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
-            
-            Text(current.map { "\(Int(settings.temperature($0.temperature).rounded()))°" } ?? "—")
-                .font(.system(size: 96, weight: .thin))
-                .foregroundStyle(.white)
-                .shadow(radius: 6)
-            Text(current?.description ?? "")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .shadow(radius: 3)
-            
-            if let h = high, let l = low {
-                Text("L:\(Int(settings.temperature(l).rounded()))°  H:\(Int(settings.temperature(h).rounded()))°")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .shadow(radius: 3)
+
+            HStack(alignment: .center, spacing: 16) {
+                VStack {
+                    Spacer()
+                    // SF symbol
+                    if let code = current?.weatherCode, let isDay = current?.isDay {
+                        Image(systemName: wmoSFSymbol(code: code, isDay: isDay))
+                            .symbolRenderingMode(.multicolor)
+                            .font(.system(size: 60))
+                            .shadow(radius: 6)
+                    } else {
+                        Image(systemName: "cloud.fill")
+                            .symbolRenderingMode(.multicolor)
+                            .font(.system(size: 60))
+                            .opacity(0.4)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // RIGHT — temperature + H/L pills
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text(current.map { "\(Int(settings.temperature($0.temperature).rounded()))°" } ?? "—")
+                        .font(.system(size: 52, weight: .light, design: .rounded))
+                        .foregroundStyle(.white)
+                        .shadow(radius: 6)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
+                    
+                    if let h = high, let l = low {
+                        HStack(spacing: 10) {
+                            Text("L: \(Int(settings.temperature(l).rounded()))°")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.cyan.opacity(0.6), in: Capsule())
+                                .overlay(Capsule().stroke(.cyan, lineWidth: 2))
+                            
+                            Text("H: \(Int(settings.temperature(h).rounded()))°")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.6), in: Capsule())
+                                .overlay(Capsule().stroke(.orange, lineWidth: 2))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .frame(maxWidth: .infinity)
         .padding(.horizontal, 20)
+        .padding(.vertical, 16)
     }
 }
 
@@ -544,7 +591,7 @@ struct DailyRow: View {
                     Image(systemName: day.daySymbol)
                         .symbolRenderingMode(.multicolor)
                         .font(.system(size: 22))
-                        .frame(width: 36)
+                        .frame(width: 45)
                     
                     if day.precipProbability >= 20 {
                         HStack(spacing: 3) {
@@ -556,7 +603,7 @@ struct DailyRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.cyan)
                         }
-                        .frame(width: 40, alignment: .center)
+                        .frame(width: 45, alignment: .center)
                     }
                 }
                 
@@ -596,7 +643,8 @@ struct DailyRow: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.3))
                 .padding(.leading, 6)
-        }.padding(.horizontal, 16).padding(.vertical, 10)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
     }
 }
 
@@ -824,7 +872,7 @@ struct SunOrbitalView: View {
                     p.addArc(center: center, radius: radius, startAngle: .degrees(startAngle), endAngle: .degrees(currentAngle), clockwise: false)
                 }
                 .stroke(
-                    LinearGradient(colors: [.orange, .yellow], startPoint: .leading, endPoint: .trailing),
+                    LinearGradient(colors: [.barrelRed, .yellow], startPoint: .leading, endPoint: .trailing),
                     style: StrokeStyle(lineWidth: 6, lineCap: .round)
                 )
                 .blur(radius: 3)
@@ -962,8 +1010,8 @@ struct DateStrip: View {
                     
                     // Sliding indicator bar
                     Capsule()
-                        .fill(Color.cyan)
-                        .frame(width: 28, height: 4)
+                    .fill(Color.barrelRed)
+                    .frame(width: 28, height: 4)
                         // Math centers the 28pt bar within the current cell's width
                         .offset(x: (CGFloat(currentIndex) * cellWidth) + (cellWidth / 2) - 14)
                         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: currentIndex)
@@ -1004,12 +1052,12 @@ struct DayDetailPage: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(fullDayName).font(.system(size: 22, weight: .semibold))
                         HStack(spacing: 16) {
-                            Label("\(Int(dispHigh.rounded()))°", systemImage: "arrow.up")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.orange)
                             Label("\(Int(dispLow.rounded()))°", systemImage: "arrow.down")
                                 .font(.system(size: 17))
                                 .foregroundStyle(.cyan)
+                            Label("\(Int(dispHigh.rounded()))°", systemImage: "arrow.up")
+                                .font(.system(size: 17))
+                                .foregroundStyle(.orange)
                         }
                     }
                     Spacer()
@@ -1153,13 +1201,16 @@ struct InteractiveTempGraph: View {
                         addCurve(to: &path, pts: pts)
                         path.addLine(to: CGPoint(x: pts.last!.0, y: topPad + plotH))
                         path.closeSubpath()
-                    }.fill(LinearGradient(colors: [.orange.opacity(0.3), .cyan.opacity(0.05)], startPoint: .top, endPoint: .bottom))
+                    }.fill(LinearGradient(colors: [.barrelRed.opacity(0.35), .barrelRed.opacity(0.03)], startPoint: .top, endPoint: .bottom))
 
                     Path { path in
                         path.move(to: CGPoint(x: pts[0].0, y: pts[0].1))
                         addCurve(to: &path, pts: pts)
                     }
-                    .stroke(Color.orange, lineWidth: 6)
+                    .stroke(
+                        LinearGradient(colors: [.barrelRedLight, .barrelRed], startPoint: .leading, endPoint: .trailing),
+                        lineWidth: 6
+                    )
                 }
 
                 ForEach(Array(displayPoints.enumerated()), id: \.offset) { idx, p in
@@ -1177,7 +1228,7 @@ struct InteractiveTempGraph: View {
                     Path { p in p.move(to: CGPoint(x: px, y: topPad)); p.addLine(to: CGPoint(x: px, y: topPad + plotH)) }
                         .stroke(Color.white.opacity(0.7), lineWidth: 5)
 
-                    Circle().fill(Color.orange)
+                    Circle().fill(Color.barrelRed)
                         .frame(width: 12, height: 12)
                         .position(x: px, y: py)
                     Circle()
@@ -1213,11 +1264,22 @@ struct InteractiveTempGraph: View {
 
 // MARK: - Utilities
 
+// Whiteout brand accent — barrel red, sampled from Whiteout's keg.
+extension Color {
+    static let barrelRed = Color(red: 0.62, green: 0.13, blue: 0.13)
+    static let barrelRedLight = Color(red: 0.82, green: 0.28, blue: 0.22)
+}
+
 struct GlassCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
-        content().background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.ultraThinMaterial).opacity(0.85))
-                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        content()
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.ultraThinMaterial).opacity(0.85))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(.white.opacity(0.15), lineWidth: 1)
+            )
     }
 }
 
