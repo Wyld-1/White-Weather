@@ -140,7 +140,7 @@ actor WeatherRepository {
      * @throws if the Open-Meteo fetch fails (NOAA failure is non-fatal)
      */
     func fetchAll(lat: Double, lon: Double) async throws -> (
-        CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod]
+        CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod], Int
     ) {
         async let omFetch   = OpenMeteoClient.shared.fetch(lat: lat, lon: lon)
         async let noaaFetch = NOAAScraper.shared.fetchProse(lat: lat, lon: lon)
@@ -153,7 +153,7 @@ actor WeatherRepository {
         let allHourly = buildHourly(om: om, tz: tz)
         let (daily, sun) = buildDaily(om: om, noaa: noaa, allHourly: allHourly, tz: tz, current: current)
 
-        return (current, daily, allHourly, sun, noaa)
+        return (current, daily, allHourly, sun, noaa, om.utcOffsetSeconds)
     }
 
     /* Builds current conditions, preferring the NOAA tombstone label over the WMO description.
@@ -235,6 +235,12 @@ actor WeatherRepository {
             let dayCond  = (isToday && (noaaData?.dayCondition ?? "").isEmpty)
                 ? (noaaData?.nightCondition ?? "") : (noaaData?.dayCondition ?? "")
 
+            // Prefer NOAA prose temperatures — more accurate than OM for the displayed location.
+            // High comes from the day prose, low from the night prose.
+            // Fall back to OM if the prose doesn’t contain the pattern (near/around/of).
+            let resolvedHigh: Double = extractHighTemp(from: noaaData?.dayProse ?? "") ?? high
+            let resolvedLow:  Double = extractLowTemp(from: noaaData?.nightProse ?? "") ?? low
+
             let isCurrentlyDay = isToday ? current.isDay : true
             let daySymbol: String = {
                 if !dayCond.isEmpty {
@@ -268,8 +274,8 @@ actor WeatherRepository {
             days.append(DailyForecast(
                 id:               UUID(),
                 date:             date,
-                high:             high,
-                low:              low,
+                high:             resolvedHigh,
+                low:              resolvedLow,
                 precipProbability: noaaData?.precipChance ?? 0,
                 shortForecast:    extractConditionLabel(from: condLabel),
                 dayProse:         dayProse,
@@ -579,6 +585,43 @@ nonisolated func conditionsAreNightSevere(day: String, night: String) -> Bool {
         [.snow, .storm], [.snow, .clear], [.storm, .clear],
     ]
     return severePairs.contains([d, n])
+}
+
+// MARK: - NOAA Temperature Extraction
+
+/* Extracts a high temperature from a NOAA day-period prose string.
+ * Handles: "high near 31", "high around 38", "high of 29", "near 31" (when "high" is implicit).
+ * Returns nil when no match is found so the caller can fall back to Open-Meteo.
+ *
+ * @param text  NOAA day-period prose, e.g. "Sunny, with a high near 31."
+ * @return temperature in °F as Double, or nil
+ */
+nonisolated func extractHighTemp(from text: String) -> Double? {
+    // Patterns: "high near 31", "high around 38", "high of 29", "highs near 31"
+    let pattern = "high[s]?\\s+(?:near|around|of)\\s+(-?[0-9]+(?:\\.[0-9]+)?)"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+          let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+          match.range(at: 1).location != NSNotFound,
+          let range = Range(match.range(at: 1), in: text)
+    else { return nil }
+    return Double(text[range])
+}
+
+/* Extracts a low temperature from a NOAA night-period prose string.
+ * Handles: "low around 15", "low near 19", "low of 12", "lows near 23".
+ * Returns nil when no match is found so the caller can fall back to Open-Meteo.
+ *
+ * @param text  NOAA night-period prose, e.g. "Partly cloudy, with a low around 15."
+ * @return temperature in °F as Double, or nil
+ */
+nonisolated func extractLowTemp(from text: String) -> Double? {
+    let pattern = "low[s]?\\s+(?:near|around|of)\\s+(-?[0-9]+(?:\\.[0-9]+)?)"
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+          let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+          match.range(at: 1).location != NSNotFound,
+          let range = Range(match.range(at: 1), in: text)
+    else { return nil }
+    return Double(text[range])
 }
 
 // MARK: - Condition Label Extraction

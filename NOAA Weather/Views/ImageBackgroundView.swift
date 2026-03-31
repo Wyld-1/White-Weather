@@ -14,11 +14,15 @@ struct ImageBackgroundView: View {
     let imageName: String
 
     var body: some View {
-        Image(imageName)
-            .resizable()
-            .scaledToFill()
-            .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.6), value: imageName)
+        GeometryReader { geo in
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                .animation(.easeInOut(duration: 0.6), value: imageName)
+        }
+        .ignoresSafeArea()
     }
 }
 

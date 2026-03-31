@@ -17,7 +17,7 @@ struct WelcomeView: View {
 
     var body: some View {
         ZStack {
-            VideoBackgroundView(videoName: "sun")
+            ImageBackgroundView(imageName: "winterDayMostlyClear")
                 .ignoresSafeArea()
 
             Color.black.opacity(0.4).ignoresSafeArea()

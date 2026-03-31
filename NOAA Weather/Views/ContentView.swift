@@ -51,45 +51,202 @@ struct ContentView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
-
-            PageDotsView(count: pageCount, currentIndex: currentIndex)
-                .padding(.bottom, 8)
+            
+            HStack{
+                Spacer()
+                PageDotsView(
+                    count: pageCount,
+                    currentIndex: currentIndex,
+                    onSelectIndex: { newIndex in
+                        selectedID = idForIndex(newIndex)
+                    }
+                )
+                Spacer()
+            }
         }
         .onAppear{
             locationManager.requestLocation()
         }
     }
+    
+    private func idForIndex(_ index: Int) -> String? {
+        let clamped = min(max(index, 0), pageCount - 1)
+
+        if clamped == 0 { return "current" }
+        if clamped == pageCount - 1 { return "add" }
+
+        let savedIndex = clamped - 1
+        guard store.saved.indices.contains(savedIndex) else { return "current" }
+        return store.saved[savedIndex].id.uuidString
+    }
 }
 // MARK: - Custom Page Dots
 
-struct PageDotsView: View {
+struct PageDotsView: View
+{
     let count: Int
     let currentIndex: Int
+    let onSelectIndex: (Int) -> Void
 
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(0..<count, id: \.self) { i in
-                if i == 0 {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(i == currentIndex ? .white : .white.opacity(0.45))
-                        .animation(.easeInOut(duration: 0.2), value: currentIndex)
-                } else if i == count - 1 {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .heavy))
-                        .foregroundStyle(i == currentIndex ? .white : .white.opacity(0.45))
-                        .animation(.easeInOut(duration: 0.2), value: currentIndex)
-                } else {
-                    Circle()
-                        .fill(i == currentIndex ? .white : .white.opacity(0.45))
-                        .frame(width: 10, height: 10)
-                        .animation(.easeInOut(duration: 0.2), value: currentIndex)
+    @State private var dragPreviewIndex: Int?
+
+    private let itemSpacing: CGFloat = 10
+    private let horizontalInset: CGFloat = 18
+    private let verticalInset: CGFloat = 10
+    private let itemSize: CGFloat = 10
+    private let iconSize: CGFloat = 11
+    private let tapThreshold: CGFloat = 8
+
+    private var displayIndex: Int
+    {
+        dragPreviewIndex ?? currentIndex
+    }
+
+    private var controlWidth: CGFloat
+    {
+        let visualItemWidth = max(itemSize, iconSize)
+        let contentWidth =
+            CGFloat(count) * visualItemWidth +
+            CGFloat(max(count - 1, 0)) * itemSpacing
+
+        return contentWidth + (horizontalInset * 2)
+    }
+
+    var body: some View
+    {
+        GeometryReader { geo in
+            let width = geo.size.width
+
+            HStack(spacing: itemSpacing)
+            {
+                ForEach(0..<count, id: \.self) { index in
+                    dotView(for: index)
                 }
             }
+            .padding(.horizontal, horizontalInset)
+            .padding(.vertical, verticalInset)
+            .frame(maxHeight: .infinity)
+            .contentShape(Capsule())
+            .background {
+                glassBackground
+            }
+            .overlay {
+                glassStroke
+            }
+            .gesture(pageGesture(width: width))
         }
-        .padding(.horizontal, 18).padding(.vertical, 10)
-        .background(.thinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+        .frame(width: controlWidth, height: 42)
+    }
+
+    @ViewBuilder
+    private func dotView(for index: Int) -> some View
+    {
+        let isSelected = index == displayIndex
+
+        if index == 0
+        {
+            Image(systemName: "location.fill")
+                .font(.system(size: iconSize))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.45))
+                .scaleEffect(isSelected ? 1.08 : 1.0)
+                .animation(.easeInOut(duration: 0.16), value: displayIndex)
+        }
+        else if index == count - 1
+        {
+            Image(systemName: "plus")
+                .font(.system(size: iconSize, weight: .heavy))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.45))
+                .scaleEffect(isSelected ? 1.08 : 1.0)
+                .animation(.easeInOut(duration: 0.16), value: displayIndex)
+        }
+        else
+        {
+            Circle()
+                .fill(isSelected ? .white : .white.opacity(0.45))
+                .frame(width: itemSize, height: itemSize)
+                .scaleEffect(isSelected ? 1.08 : 1.0)
+                .animation(.easeInOut(duration: 0.16), value: displayIndex)
+        }
+    }
+
+    @ViewBuilder
+    private var glassBackground: some View
+    {
+        if #available(iOS 26.0, *)
+        {
+            Capsule()
+                .fill(.clear)
+                .glassEffect(.regular, in: Capsule())
+        }
+        else
+        {
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    Capsule()
+                        .stroke(.white.opacity(0.15), lineWidth: 1)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private var glassStroke: some View
+    {
+        if #available(iOS 26.0, *)
+        {
+            Capsule()
+                .stroke(.white.opacity(0.08), lineWidth: 0.75)
+        }
+    }
+
+    private func pageGesture(width: CGFloat) -> some Gesture
+    {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let localX = min(max(value.location.x, 0), width)
+                let proposedIndex = indexForX(localX, width: width)
+
+                guard abs(value.translation.width) > tapThreshold else { return }
+
+                if dragPreviewIndex != proposedIndex
+                {
+                    dragPreviewIndex = proposedIndex
+                    Haptics.shared.impact(.light)
+                }
+            }
+            .onEnded { value in
+                let localX = min(max(value.location.x, 0), width)
+
+                defer
+                {
+                    dragPreviewIndex = nil
+                }
+
+                if abs(value.translation.width) <= tapThreshold
+                {
+                    let nextIndex =
+                        localX < width / 2
+                        ? max(currentIndex - 1, 0)
+                        : min(currentIndex + 1, count - 1)
+
+                    onSelectIndex(nextIndex)
+                    Haptics.shared.impact(.light)
+                    return
+                }
+
+                let finalIndex = indexForX(localX, width: width)
+                onSelectIndex(finalIndex)
+                Haptics.shared.impact(.light)
+            }
+    }
+
+    private func indexForX(_ x: CGFloat, width: CGFloat) -> Int
+    {
+        guard count > 1, width > 0 else { return 0 }
+
+        let progress = x / width
+        let rawIndex = progress * CGFloat(count - 1)
+        return min(max(Int(round(rawIndex)), 0), count - 1)
     }
 }
 
@@ -101,12 +258,17 @@ struct AddLocationPage: View {
     @State private var showSearch = false
     @State private var isAnimating = false
 
+    // Season for the add-location background — use the device’s local timezone.
+    private var currentSeason: WeatherSeason {
+        WeatherSeason.from(utcOffsetSeconds: TimeZone.current.secondsFromGMT())
+    }
+
     var body: some View {
         ZStack {
-            VideoBackgroundView(videoName: "sun").ignoresSafeArea()
-            RadialGradient(stops: [.init(color: .blue.opacity(0.4), location: 0),
-                                   .init(color: .black.opacity(0.7), location: 0.8)],
-                           center: .top, startRadius: 10, endRadius: 600).ignoresSafeArea()
+            ImageBackgroundView(imageName: backgroundImageName(season: currentSeason, condition: .clear))
+                .ignoresSafeArea()
+            LinearGradient(colors: [.black.opacity(0.2), .black.opacity(0.6)],
+                           startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
             VStack(spacing: 30) {
                 Spacer()
@@ -173,22 +335,10 @@ struct WeatherContentView: View {
     let viewModel: WeatherViewModel
     @Binding var selectedDay: DailyForecast?
     @EnvironmentObject private var settings: AppSettings
-
+    
     var body: some View {
         VStack(spacing: 12) {
-            CurrentConditionsHeader(
-                locationName:      viewModel.locationName,
-                isCurrentLocation: viewModel.isCurrentLocation,
-                current:           viewModel.current,
-                high:              viewModel.daily.first?.high,
-                low:               viewModel.daily.first?.low,
-                isLoading:         viewModel.daily.isEmpty
-            )
-            .padding(.top, 15)
-            .padding(.bottom, 4)
-
             // Versatile warning slot
-            // windGusts is raw mph — threshold is always in mph; display converts.
             Group {
                 if let gusts = viewModel.current?.windGusts, gusts >= 40.0 {
                     WeatherAlertBanner(
@@ -203,64 +353,51 @@ struct WeatherContentView: View {
                 // TODO: Add future warnings with 'if' blocks here
             }
             .padding(.bottom, 4)
-
-            if viewModel.daily.isEmpty {
-                // Warm start state
-                VStack(spacing: 30) {
-                    Image("WhiteoutSearching")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(height: 250)
-                        .padding(.vertical, 50)
-                }
-                .transition(.opacity)
-            } else {
-                // Hourly Forecast
-                if !viewModel.hourly.isEmpty {
-                    HourlyCard(
-                        hours: viewModel.hourly,
-                        dayProse: viewModel.daily.first?.dayProse,
-                        sunEvent: viewModel.sunEvent
-                    )
-                    .padding(.horizontal, 16)
-                    .onTapGesture {
-                        if let today = viewModel.daily.first {
-                            Haptics.shared.impact(.light)
-                            selectedDay = today
-                        }
+            
+            // Hourly Forecast
+            if !viewModel.hourly.isEmpty {
+                HourlyCard(
+                    hours: viewModel.hourly,
+                    dayProse: viewModel.daily.first?.dayProse,
+                    sunEvent: viewModel.sunEvent
+                )
+                .padding(.horizontal, 16)
+                .onTapGesture {
+                    if let today = viewModel.daily.first {
+                        Haptics.shared.impact(.light)
+                        selectedDay = today
                     }
                 }
-                
-                if !viewModel.daily.isEmpty {
-                    DailyCard(
-                        days: viewModel.daily,
-                        globalLow: viewModel.globalLow,
-                        globalHigh: viewModel.globalHigh,
-                        onSelect: { day in
-                            self.selectedDay = day
-                        }
-                    )
+            }
+
+            if !viewModel.daily.isEmpty {
+                DailyCard(
+                    days: viewModel.daily,
+                    globalLow: viewModel.globalLow,
+                    globalHigh: viewModel.globalHigh,
+                    onSelect: { selectedDay = $0 }
+                )
+                .padding(.horizontal, 16)
+            }
+
+            if let cur = viewModel.current {
+                WindCard(
+                    windSpeed: cur.windSpeed,
+                    windGusts: cur.windGusts,
+                    windDegrees: cur.windDirection,
+                    windDirectionLabel: cur.windDirectionLabel
+                )
+                .padding(.horizontal, 16)
+            }
+
+            if let sun = viewModel.sunEvent {
+                SunCard(sunEvent: sun)
                     .padding(.horizontal, 16)
-                }
-                
-                if let cur = viewModel.current {
-                    WindCard(
-                        windSpeed: cur.windSpeed,
-                        windGusts: cur.windGusts,
-                        windDegrees: cur.windDirection,
-                        windDirectionLabel: cur.windDirectionLabel
-                    )
-                    .padding(.horizontal, 16)
-                }
-                
-                if let sun = viewModel.sunEvent {
-                    SunCard(sunEvent: sun)
-                        .padding(.horizontal, 16)
-                }
             }
 
             Spacer(minLength: 40)
         }
+        .padding(.top, 8)
     }
 }
 
@@ -292,6 +429,7 @@ struct CurrentConditionsHeader: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
+            .padding(.bottom, -20)
 
             HStack(alignment: .center, spacing: 16) {
                 VStack {
@@ -314,7 +452,7 @@ struct CurrentConditionsHeader: View {
                 // RIGHT — temperature + H/L pills
                 VStack(alignment: .trailing, spacing: 8) {
                     Text(current.map { "\(Int(settings.temperature($0.temperature).rounded()))°" } ?? "—")
-                        .font(.system(size: 52, weight: .light, design: .rounded))
+                        .font(.system(size: 52, weight: .regular, design: .rounded))
                         .foregroundStyle(.white)
                         .shadow(radius: 6)
                         .minimumScaleFactor(0.6)
@@ -342,6 +480,7 @@ struct CurrentConditionsHeader: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .frame(maxHeight: 100)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -586,12 +725,12 @@ struct DailyRow: View {
                 .foregroundStyle(.white)
                 .frame(width: 52, alignment: .leading)
 
-            HStack(spacing: -4) {
+            HStack(spacing: -2) {
                 VStack {
                     Image(systemName: day.daySymbol)
                         .symbolRenderingMode(.multicolor)
                         .font(.system(size: 22))
-                        .frame(width: 45)
+                        .frame(width: 42)
                     
                     if day.precipProbability >= 20 {
                         HStack(spacing: 3) {
@@ -603,7 +742,7 @@ struct DailyRow: View {
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.cyan)
                         }
-                        .frame(width: 45, alignment: .center)
+                        .frame(width: 42, alignment: .center)
                     }
                 }
                 

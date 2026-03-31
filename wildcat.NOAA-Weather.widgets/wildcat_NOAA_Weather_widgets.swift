@@ -36,7 +36,7 @@ struct Provider: AppIntentTimelineProvider {
         // Fetch fresh data if we have coordinates
         if let lat, let lon {
             do {
-                let (cur, days, _, _, _) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
+                let (cur, days, _, _, _, _) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
                 guard let firstDay = days.first else { throw URLError(.badServerResponse) }
 
                 // Geocode to get the nearest city name independently of the main app.

@@ -2,7 +2,7 @@
  * White Weather
  *
  * Observable state for a single location page. Owns the fetch lifecycle,
- * background video selection, and hourly windowing.
+ * background image selection, and hourly windowing.
  * One instance per LocationPageView — not shared across pages.
  */
 
@@ -11,60 +11,134 @@ import CoreLocation
 import Observation
 import MapKit
 
-// MARK: - WeatherBackground
+// MARK: - WeatherSeason
 
-/* Maps weather conditions to background video assets.
- * Resolution order: NOAA condition string → WMO code.
+/* Calendar season derived from the location's local date.
+ * Uses meteorological seasons (month-based) for simplicity and reliability.
  */
-enum WeatherBackground {
-    case sun, mostlySunny, clouds, drizzle, rain, snow
+enum WeatherSeason: String {
+    case spring, summer, fall, winter
 
-    /* @param code  Open-Meteo WMO weather code */
-    static func from(code: Int) -> WeatherBackground {
-        switch code {
-        case 71...77, 85, 86:        return .snow
-        case 65...67, 82, 95...99:   return .rain      // heavy rain, freezing, thunder
-        case 51...64, 80, 81:        return .drizzle    // light drizzle, light showers
-        case 3, 45, 48:              return .clouds     // overcast, fog
-        case 1, 2:                   return .mostlySunny
-        default:                     return .sun
+    /* Derives the season from a UTC date adjusted to the given timezone offset.
+     *
+     * @param date             UTC date to evaluate (typically now)
+     * @param utcOffsetSeconds the location's UTC offset from Open-Meteo
+     */
+    static func from(date: Date = Date(), utcOffsetSeconds: Int) -> WeatherSeason {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: utcOffsetSeconds) ?? .current
+        let month = cal.component(.month, from: date)
+        switch month {
+        case 3...5:  return .spring
+        case 6...8:  return .summer
+        case 9...11: return .fall
+        default:     return .winter   // 12, 1, 2
         }
     }
+}
 
-    /* Derives the background from a NOAA condition string.
-     * Returns nil if the condition is empty or unrecognised — caller falls back to WMO.
-     *
-     * @param condition  tombstone or extracted condition label
+// MARK: - WeatherCondition
+
+/* Broad sky/precipitation condition used to select the background image.
+ * Resolution order: NOAA condition string → WMO weather code.
+ */
+enum WeatherCondition {
+    case clear, mostlyClear, overcast, rain, snow
+
+    /* Derives the condition from a NOAA tombstone or prose condition string.
+     * Returns nil when the string is empty or unrecognised — caller falls back to WMO.
      */
-    static func fromCondition(_ condition: String) -> WeatherBackground? {
+    static func fromCondition(_ condition: String) -> WeatherCondition? {
         let c = condition.lowercased()
         guard !c.isEmpty else { return nil }
         let part = c.components(separatedBy: " then ").last ?? c
 
         if part.contains("blizzard") || part.contains("heavy snow") ||
-           part.contains("snow") || part.contains("flurr") || part.contains("sleet") { return .snow }
-        if part.contains("thunder") || part.contains("tstm") ||
-           part.contains("heavy rain") || part.contains("shower")                    { return .rain }
-        if part.contains("rain") || part.contains("drizzle")                         { return .drizzle }
-        if part.contains("fog") || part.contains("mist") ||
-           part.contains("overcast") || part.contains("cloudy")                      { return .clouds }
+           part.contains("snow")     || part.contains("flurr")      ||
+           part.contains("sleet")   || part.contains("wintry mix")  { return .snow }
+        if part.contains("thunder") || part.contains("tstm")  ||
+           part.contains("heavy rain") || part.contains("shower") ||
+           part.contains("rain")  || part.contains("drizzle")       { return .rain }
+        if part.contains("fog")  || part.contains("mist")  ||
+           part.contains("overcast")                                 { return .overcast }
+        if part.contains("cloudy")                                   { return .overcast }
         if part.contains("mostly sunny") || part.contains("mostly clear") ||
-           part.contains("partly sunny") || part.contains("partly cloudy")           { return .mostlySunny }
+           part.contains("partly sunny") || part.contains("partly cloudy") { return .mostlyClear }
         if part.contains("sunny") || part.contains("clear") ||
-           part.contains("fair") || part.contains("frost")                           { return .sun }
+           part.contains("fair")  || part.contains("frost")          { return .clear }
         return nil
     }
 
-    var videoName: String {
-        switch self {
-        case .sun:         return "sun"
-        case .mostlySunny: return "mostlysunny"
-        case .clouds:      return "clouds"
-        case .drizzle:     return "drizzle"
-        case .rain:        return "rain"
-        case .snow:        return "snow"
+    /* Derives the condition from an Open-Meteo WMO weather code. */
+    static func fromWMO(code: Int) -> WeatherCondition {
+        switch code {
+        case 71...77, 85, 86:      return .snow
+        case 51...67, 80...82,
+             95...99:              return .rain
+        case 3, 45, 48:            return .overcast
+        case 1, 2:                 return .mostlyClear
+        default:                   return .clear
         }
     }
+
+    /* The condition suffix used in image asset names, e.g. "Clear", "Snow". */
+    var assetSuffix: String {
+        switch self {
+        case .clear:       return "Clear"
+        case .mostlyClear: return "MostlyClear"
+        case .overcast:    return "Overcast"
+        case .rain:        return "Rain"
+        case .snow:        return "Snow"
+        }
+    }
+
+    /* Snow backgrounds only exist for fall/spring/winter.
+     * Summer snow falls back to overcast.
+     */
+    func adjusted(for season: WeatherSeason) -> WeatherCondition {
+        if self == .snow && season == .summer { return .overcast }
+        return self
+    }
+}
+
+// MARK: - Background Image Resolution
+
+/* Resolves the correct background image asset name from a season + condition pair.
+ *
+ * Naming convention: [season]Day[Condition]  e.g. "springDayClear"
+ * Time-of-day is always "Day" for now (Night assets don't exist yet).
+ *
+ * Fallback chain when an asset doesn't exist yet:
+ *   Snow      → Overcast → MostlyClear → Clear
+ *   Overcast  → MostlyClear → Clear
+ *   MostlyClear → Clear
+ *   Rain      → Overcast → MostlyClear → Clear
+ *   Clear     → (always exists — guaranteed safe)
+ */
+func backgroundImageName(season: WeatherSeason, condition: WeatherCondition) -> String {
+    // Snow not available in summer — caller should have adjusted() already, but guard anyway.
+    let cond = condition.adjusted(for: season)
+
+    let candidate = "\(season.rawValue)Day\(cond.assetSuffix)"
+    if UIImage(named: candidate) != nil { return candidate }
+
+    // Fallback chain
+    let fallbacks: [WeatherCondition]
+    switch cond {
+    case .snow:        fallbacks = [.overcast, .mostlyClear, .clear]
+    case .rain:        fallbacks = [.overcast, .mostlyClear, .clear]
+    case .overcast:    fallbacks = [.mostlyClear, .clear]
+    case .mostlyClear: fallbacks = [.clear]
+    case .clear:       fallbacks = []
+    }
+
+    for fallback in fallbacks {
+        let name = "\(season.rawValue)Day\(fallback.assetSuffix)"
+        if UIImage(named: name) != nil { return name }
+    }
+
+    // Last resort — summerDayClear is guaranteed to exist.
+    return "summerDayClear"
 }
 
 // MARK: - WeatherViewModel
@@ -81,7 +155,15 @@ final class WeatherViewModel {
     var sunEvent: SunEvent?
 
     var locationName: String = ""
-    var background: WeatherBackground = .sun
+    var weatherCondition: WeatherCondition = .clear
+    var weatherSeason: WeatherSeason = .summer
+    private var utcOffsetSeconds: Int = 0
+
+    // Resolved asset name — use this in the view to load the background image.
+    var backgroundImageName: String {
+        NOAA_Weather.backgroundImageName(season: weatherSeason, condition: weatherCondition)
+    }
+
     var isLoading = false
     var isSkiResort = false
     var isCurrentLocation = false  // true for the GPS page; drives the location.fill icon in the header
@@ -110,12 +192,13 @@ final class WeatherViewModel {
             locationName = cached.locationName
         }
 
-        // Only update the background if the cache has a real condition string.
-        // If the condition is empty (no cache or first launch), leave the background
-        // at its current value rather than snapping it to .sun via code 0.
-        if let bg = WeatherBackground.fromCondition(cached.condition) {
-            background = bg
+        // Only update the condition if the cache has a real condition string.
+        // If empty, leave unchanged rather than snapping to a default.
+        if let cond = WeatherCondition.fromCondition(cached.condition) {
+            weatherCondition = cond
         }
+        // Season is derived from current time + stored offset (offset unchanged from last fetch).
+        weatherSeason = WeatherSeason.from(utcOffsetSeconds: utcOffsetSeconds)
 
         current = CurrentConditions(
             temperature:        cached.temperature,
@@ -165,7 +248,7 @@ final class WeatherViewModel {
         }
 
         do {
-            let (cur, days, allHourly, sun, scraped) = try await WeatherRepository.shared.fetchAll(
+            let (cur, days, allHourly, sun, scraped, utcOffset) = try await WeatherRepository.shared.fetchAll(
                 lat: coordinate.latitude,
                 lon: coordinate.longitude
             )
@@ -175,8 +258,11 @@ final class WeatherViewModel {
             sunEvent = sun
             hourly   = hourlyWindow(from: allHourly)
 
-            background = WeatherBackground.fromCondition(scraped[todayKey()]?.dayCondition ?? "")
-                      ?? WeatherBackground.from(code: cur.weatherCode)
+            let cond = WeatherCondition.fromCondition(scraped[todayKey()]?.dayCondition ?? "")
+                     ?? WeatherCondition.fromWMO(code: cur.weatherCode)
+            weatherCondition = cond
+            weatherSeason    = WeatherSeason.from(utcOffsetSeconds: utcOffset)
+            utcOffsetSeconds = utcOffset
 
             calculateGlobalBounds(days: days)
             saveCoordinates(id: locationID ?? "current", coord: coordinate)

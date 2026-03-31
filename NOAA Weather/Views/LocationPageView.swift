@@ -28,32 +28,61 @@ struct LocationPageView: View {
     var body: some View {
         ZStack {
             // Background
-            VideoBackgroundView(videoName: viewModel.background.videoName)
+            ImageBackgroundView(imageName: viewModel.backgroundImageName)
                 .ignoresSafeArea()
-            Color.black.opacity(0.3).ignoresSafeArea()
-            
-            Group {
-                if viewModel.isLoading && viewModel.current == nil {
-                    ProgressView().tint(.white)
-                } else if let error = viewModel.errorMessage {
+            Color.black.opacity(0.35).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Pinned header — always visible, never scrolls
+                CurrentConditionsHeader(
+                    locationName:      viewModel.locationName,
+                    isCurrentLocation: viewModel.isCurrentLocation,
+                    current:           viewModel.current,
+                    high:              viewModel.daily.first?.high,
+                    low:               viewModel.daily.first?.low,
+                    isLoading:         viewModel.daily.isEmpty
+                )
+                .padding(.top, 8)
+                
+                Capsule()
+                    .fill(.white.opacity(0.7))
+                    .frame(width: 300, height: 3)
+                    .padding(.bottom, 8)
+
+                if let error = viewModel.errorMessage {
+                    // Error state — centred below the pinned header
+                    Spacer()
                     ErrorView(message: error) { triggerFetch() }
+                    Spacer()
+
+                } else if viewModel.daily.isEmpty {
+                    // Loading state
+                    Spacer()
+                    Image("WhiteoutSearching")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity)
+                        .shadow(radius: 6)
+                        .padding(.horizontal, 32)
+                        .padding(.bottom, -18)
+
                 } else {
+                    // Loaded — cards scroll beneath the pinned header
                     ScrollView(.vertical, showsIndicators: false) {
                         WeatherContentView(viewModel: viewModel, selectedDay: $selectedDay)
-                        if !viewModel.daily.isEmpty {
-                            if !isCurrentLocation {
-                                deleteButton
-                            }
-                            #if DEBUG
-                            debugResetButton
-                            #endif
 
-                            Text("Weather provided by NOAA and Open-Meteo")
-                                .font(.caption2)
-                                .foregroundStyle(.gray)
-                                .shadow(color: .black, radius: 3)
-                                .padding(.bottom, 60)
+                        if !isCurrentLocation {
+                            deleteButton
                         }
+                        #if DEBUG
+                        debugResetButton
+                        #endif
+
+                        Text("Weather provided by NOAA and Open-Meteo")
+                            .font(.caption2)
+                            .foregroundStyle(.gray)
+                            .shadow(color: .black, radius: 3)
+                            .padding(.bottom, 60)
                     }
                     .refreshable {
                         guard let coord = coordinate else { return }
