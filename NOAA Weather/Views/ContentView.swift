@@ -1087,20 +1087,31 @@ struct DayDetailSheet: View {
                 DateStrip(days: days, currentIndex: $currentIndex)
                     .padding(.top, 8)
 
-                TabView(selection: $currentIndex) {
-                    ForEach(days.indices, id: \.self) { i in
-                        DayDetailPage(
-                            day: days[i],
-                            globalLow: globalLow,
-                            globalHigh: globalHigh
-                        )
-                        .tag(i)
+                ZStack(alignment: .bottom) {
+                    TabView(selection: $currentIndex) {
+                        ForEach(days.indices, id: \.self) { i in
+                            DayDetailPage(
+                                day: days[i],
+                                globalLow: globalLow,
+                                globalHigh: globalHigh
+                            )
+                            .tag(i)
+                        }
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .animation(.easeInOut, value: currentIndex)
+
+                    // Fade content into the home indicator area.
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.3)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 80)
+                    .allowsHitTesting(false)
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .animation(.easeInOut, value: currentIndex)
+                .ignoresSafeArea(edges: .bottom)
             }
-            .background(Color(.systemBackground))
             .navigationTitle("Forecast")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1149,10 +1160,10 @@ struct DateStrip: View {
                                 VStack(spacing: 3) {
                                     Text(Calendar.current.isDateInToday(days[i].date) ? "Today" : shortDay.string(from: days[i].date))
                                         .font(.system(size: 11, weight: .regular))
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.white.opacity(0.6))
                                     Text(shortDate.string(from: days[i].date))
                                         .font(.system(size: 17, weight: .regular))
-                                        .foregroundStyle(.primary)
+                                        .foregroundStyle(.white)
                                     
                                     // Empty space to reserve room for the bar below
                                     Color.clear.frame(height: 4)
@@ -1175,6 +1186,7 @@ struct DateStrip: View {
                 }
                 
                 Divider()
+                    .background(.white.opacity(0.2))
             }
         }
         .frame(height: 60)

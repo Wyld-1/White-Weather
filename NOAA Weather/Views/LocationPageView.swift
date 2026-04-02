@@ -36,7 +36,6 @@ struct LocationPageView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Pinned header — always visible, never scrolls
                 CurrentConditionsHeader(
                     locationName:      viewModel.locationName,
                     isCurrentLocation: viewModel.isCurrentLocation,
@@ -47,19 +46,19 @@ struct LocationPageView: View {
                     currentSFSymbol:   viewModel.currentSFSymbol
                 )
                 .padding(.top, 8)
-                
+
                 Capsule()
                     .fill(.black.opacity(0.3))
                     .frame(width: 300, height: 4)
+                
+                Spacer(minLength: 10)
 
                 if let error = viewModel.errorMessage {
-                    // Error state — centred below the pinned header
                     Spacer()
                     ErrorView(message: error) { triggerFetch() }
                     Spacer()
 
                 } else if viewModel.daily.isEmpty {
-                    // Loading state
                     Spacer()
                     Image("WhiteoutSearching")
                         .resizable()
@@ -70,54 +69,66 @@ struct LocationPageView: View {
                         .padding(.bottom, -18)
 
                 } else {
-                    // Loaded — cards scroll beneath the pinned header
-                    ScrollView(.vertical, showsIndicators: false) {
-                        WeatherContentView(viewModel: viewModel, selectedDay: $selectedDay)
+                    // Scroll content extends under the home indicator; the gradient
+                    // overlay fades it out so nothing collides with system chrome.
+                    ZStack(alignment: .bottom) {
+                        ScrollView(.vertical, showsIndicators: false) {
+                            WeatherContentView(viewModel: viewModel, selectedDay: $selectedDay)
 
-                        if !isCurrentLocation {
-                            deleteButton
+                            if !isCurrentLocation {
+                                deleteButton
+                            }
+                            #if DEBUG
+                            debugResetButton
+                            #endif
+
+                            Text("Weather provided by NOAA and Open-Meteo")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.8))
+                                .shadow(color: .black, radius: 1)
+                                .padding(.bottom, 80)
                         }
-                        #if DEBUG
-                        debugResetButton
-                        #endif
-
-                        Text("Weather provided by NOAA and Open-Meteo")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .shadow(color: .black, radius: 1)
-                            .padding(.bottom, 60)
-                    }
-                    .mask(
-                        LinearGradient(
+                        .mask(
+                            LinearGradient(
                                 stops: [
-                                    .init(color: .clear, location: 0),                   // Totally hidden at the top
-                                    .init(color: .black.opacity(0.3), location: 0.02),   // Midway point for a smoother curve
-                                    .init(color: .black, location: 0.04),                // Fully visible by 4% depth
-                                    .init(color: .black, location: 1.0)
+                                    .init(color: .clear,         location: 0.00),
+                                    .init(color: .black.opacity(0.3), location: 0.02),
+                                    .init(color: .black,         location: 0.04),
+                                    .init(color: .black,         location: 1.00),
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
-                    )
-                    .refreshable {
-                        guard let coord = coordinate else { return }
-                        // Mirror triggerFetch: saved locations skip geocoding so their
-                        // canonical name (e.g. "White Pass" or "Dallas, TX") is never
-                        // overwritten by CLGeocoder's nearest-town result.
-                        let locationID  = savedLocation?.id.uuidString
-                        let skipGeocode = savedLocation != nil
-                        await Task.detached(priority: .userInitiated) {
-                            await viewModel.load(
-                                coordinate:  coord,
-                                locationID:  locationID,
-                                skipGeocode: skipGeocode,
-                                forceRefresh: true
-                            )
+                        )
+                        .ignoresSafeArea(edges: .bottom)
+                        .refreshable {
+                            guard let coord = coordinate else { return }
+                            let locationID  = savedLocation?.id.uuidString
+                            let skipGeocode = savedLocation != nil
+                            await Task.detached(priority: .userInitiated) {
+                                await viewModel.load(
+                                    coordinate:  coord,
+                                    locationID:  locationID,
+                                    skipGeocode: skipGeocode,
+                                    forceRefresh: true
+                                )
+                            }.value
                         }
-                        .value
+
+                        // Bottom fade — covers the home indicator area with a soft
+                        // gradient that matches the weather background color.
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.45)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 80)
+                        .allowsHitTesting(false)
+                        .ignoresSafeArea(edges: .bottom)
                     }
                 }
             }
+            .ignoresSafeArea(edges: .bottom)
         }
         .sheet(item: $selectedDay) { day in
             DayDetailSheet(

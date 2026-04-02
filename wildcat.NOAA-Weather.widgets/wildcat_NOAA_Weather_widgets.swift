@@ -261,9 +261,9 @@ struct WeatherInfoPanel: View {
                 VStack(spacing: 0) {
                     Image(systemName: data.sfSymbol)
                         .renderingMode(.original)
-                        .font(.system(size: data.precipProbability >= 20 ? 45 : 52))
+                        .font(.system(size: data.precipProbability >= 20 ? 45 : 50))
                         .scaledToFit()
-                        .frame(height: data.precipProbability >= 20 ? 45 : 52)
+                        .frame(height: data.precipProbability >= 20 ? 45 : 50)
                         .shadow(color: .black.opacity(0.3), radius: 2)
 
                     if data.precipProbability >= 20 {
