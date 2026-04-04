@@ -191,15 +191,12 @@ struct PageDotsView: View
     {
         if #available(iOS 26.0, *)
         {
-            // Force a dark tint so the bar is always legible regardless of background.
-            // .regular auto-adapts (light on light = invisible indicators), so we
-            // use a dark fill on top of a subtle glass effect instead.
+            // Real liquid glass, forced dark so indicators are always legible
+            // regardless of the weather background behind it.
+            // .dark tint collapses the adaptive auto-tinting that would make
+            // the capsule go light over snow or clear-day backgrounds.
             Capsule()
-                .fill(Color.black.opacity(0.35))
-                .background {
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                }
+                .glassEffect(.regular.tint(.black.opacity(0.2)).interactive())
         }
         else
         {
@@ -217,6 +214,11 @@ struct PageDotsView: View
     private var glassStroke: some View
     {
         if #available(iOS 26.0, *)
+        {
+            // Liquid glass renders its own specular border; no manual stroke needed.
+            EmptyView()
+        }
+        else
         {
             Capsule()
                 .stroke(Color.white.opacity(0.12), lineWidth: 0.75)

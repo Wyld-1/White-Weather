@@ -70,18 +70,38 @@ struct WelcomeView: View {
                 )
                 .padding(.horizontal, 24)
 
-                Button(action: { Haptics.shared.notification(.success); onDismiss() }) {
-                    Text("Get Started")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 18)
-                        .background(
-                            LinearGradient(colors: [Color(red: 0.82, green: 0.28, blue: 0.22), Color(red: 0.62, green: 0.13, blue: 0.13)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                        )
-                        .clipShape(Capsule())
-                        .shadow(color: Color(red: 0.62, green: 0.13, blue: 0.13).opacity(0.5), radius: 12, y: 5)
+                Group {
+                    if #available(iOS 26.0, *) {
+                        Button(action: {
+                            Haptics.shared.notification(.success); onDismiss()
+                        }) {
+                            Text("Get Started")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 18)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(.barrelRed)
+                        .buttonBorderShape(.capsule)
+                        .shadow(color: Color.barrelRed.opacity(0.5), radius: 12, y: 5)
+                    } else {
+                        Button(action: {
+                            Haptics.shared.notification(.success); onDismiss()
+                        }) {
+                            Text("Get Started")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 18)
+                                .background(
+                                    LinearGradient(colors: [Color(red: 0.82, green: 0.28, blue: 0.22), Color(red: 0.62, green: 0.13, blue: 0.13)],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                                )
+                                .clipShape(Capsule())
+                                .shadow(color: Color(red: 0.62, green: 0.13, blue: 0.13).opacity(0.5), radius: 12, y: 5)
+                        }
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 35)
