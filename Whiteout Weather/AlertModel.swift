@@ -53,6 +53,17 @@ enum NWSAlertSeverity: Int, Comparable, Decodable {
 
     /* Border opacity stays at 100% regardless of severity — always clear. */
     var borderOpacity: Double { 1.0 }
+
+    /* Human-readable severity label for the alert detail sheet subtitle. */
+    var label: String {
+        switch self {
+        case .extreme:  return "Extreme Warning"
+        case .severe:   return "Severe Warning"
+        case .moderate: return "Moderate Advisory"
+        case .minor:    return "Minor Advisory"
+        case .unknown:  return "Weather Alert"
+        }
+    }
 }
 
 // MARK: - Display Config
@@ -73,6 +84,7 @@ struct NWSAlert: Identifiable {
     let event: String
     let severity: NWSAlertSeverity
     let headline: String        // Short NWS headline, e.g. "Wind Advisory in effect until 6 PM PDT"
+    let description: String     // Full NWS descriptive text shown in the detail sheet
 
     /* Resolves the display configuration for this alert's event type.
      * Falls back to a generic warning icon for unknown event names.
@@ -223,6 +235,7 @@ private struct AlertProperties: Decodable {
     let event: String
     let severity: NWSAlertSeverity
     let headline: String?
+    let description: String?    // Full alert text; may be nil for some product types
     let status: String          // "Actual" | "Exercise" | "System" | "Test" | "Draft"
     let messageType: String     // "Alert" | "Update" | "Cancel" | "Ack" | "Error"
 }
@@ -259,10 +272,11 @@ actor NWSAlertClient {
                           ($0.properties.messageType == "Alert" || $0.properties.messageType == "Update") }
                 .map { feature in
                     NWSAlert(
-                        id:       feature.id,
-                        event:    feature.properties.event,
-                        severity: feature.properties.severity,
-                        headline: feature.properties.headline ?? feature.properties.event
+                        id:          feature.id,
+                        event:       feature.properties.event,
+                        severity:    feature.properties.severity,
+                        headline:    feature.properties.headline ?? feature.properties.event,
+                        description: feature.properties.description ?? ""
                     )
                 }
                 .sorted { $0.severity < $1.severity }

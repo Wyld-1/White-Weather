@@ -8,14 +8,32 @@ import UIKit
 
 // MARK: - Timeline Provider
 
+// Stale threshold: cache older than 20 minutes triggers a live fetch.
+// Keeps the widget from hammering the network on every WidgetKit ping
+// while still staying reasonably fresh when iOS wakes it up.
+private let cacheStaleInterval: TimeInterval = 20 * 60
+
 struct Provider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> WeatherEntry {
         WeatherEntry(date: Date(), data: .placeholder)
     }
 
+    // snapshot() runs when the user is browsing the widget gallery or adding
+    // the widget. Return cached data instantly if it's fresh; otherwise fetch
+    // so the preview reflects real conditions rather than stale data.
     func snapshot(for configuration: ConfigurationAppIntent, in context: Context) async -> WeatherEntry {
         let id = configuration.location?.id ?? "current"
-        return WeatherEntry(date: Date(), data: WidgetWeatherData.load(id: id) ?? .placeholder)
+        let cached = WidgetWeatherData.load(id: id)
+
+        // Use cache if it's fresh enough for a preview.
+        if let cached,
+           Date().timeIntervalSince(cached.fetchedAt) < cacheStaleInterval {
+            return WeatherEntry(date: Date(), data: cached)
+        }
+
+        // Cache is stale or absent — run a real fetch so the preview is accurate.
+        // Fall back to stale cache or placeholder if the fetch fails.
+        return await fetchEntry(id: id, cached: cached) ?? WeatherEntry(date: Date(), data: cached ?? .placeholder)
     }
 
     func timeline(for configuration: ConfigurationAppIntent, in context: Context) async -> Timeline<WeatherEntry> {
@@ -23,109 +41,148 @@ struct Provider: AppIntentTimelineProvider {
         let now = Date()
         let cached = WidgetWeatherData.load(id: id)
 
-        // Resolve coordinates — from cache or from the location registry
-        var lat = cached?.lat
-        var lon = cached?.lon
-        if lat == nil || lon == nil {
-            let registry = UserDefaults(suiteName: WidgetWeatherData.groupID)?
-                .dictionary(forKey: "saved_location_coords") as? [String: String] ?? [:]
-            if let coords = registry[id]?.split(separator: ","), coords.count == 2 {
-                lat = Double(coords[0]); lon = Double(coords[1])
-            }
+        // Skip a live fetch if the cache is still fresh AND the location hasn't changed.
+        // WidgetKit calls timeline() on its own schedule AND whenever the app
+        // calls reloadAllTimelines() (e.g. on foreground). The staleness guard
+        // prevents a network hit every single time the user unlocks their phone.
+        // Exception: if the App Group has fresher coordinates than the cache
+        // (e.g. the device moved to a new city), force a re-fetch immediately.
+        let appGroupCoords = UserDefaults(suiteName: WidgetWeatherData.groupID)?
+            .dictionary(forKey: "saved_location_coords") as? [String: String]
+        let registryCoordString = appGroupCoords?[id]
+        let cacheCoordString = cached.map { "\($0.lat),\($0.lon)" }
+        let locationUnchanged = registryCoordString == nil || registryCoordString == cacheCoordString
+
+        if let cached,
+           locationUnchanged,
+           Date().timeIntervalSince(cached.fetchedAt) < cacheStaleInterval {
+            // Return the cached entry and ask WidgetKit to check back when it expires.
+            let nextRefresh = cached.fetchedAt.addingTimeInterval(cacheStaleInterval)
+            return Timeline(
+                entries: [WeatherEntry(date: now, data: cached)],
+                policy: .after(nextRefresh)
+            )
         }
 
-        // Fetch fresh data if we have coordinates
-        if let lat, let lon {
-            do {
-                let (cur, days, allHourly, _, _, _, alerts) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
-                guard let firstDay = days.first else { throw URLError(.badServerResponse) }
-
-                // Geocode to get the nearest city name independently of the main app.
-                // Re-use the cached name if geocoding fails.
-                let defaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
-                let savedNames = defaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
-
-                // Fallback chain for current location:
-                //   1. Dedicated "current_location_name" key (written by main app geocoder,
-                //      never clobbered by saved-location fetches)
-                //   2. Widget's own geocoder (runs independently in the extension)
-                //   3. Stale widget cache
-                // For saved locations: saved_location_names dict -> geocoder -> stale cache.
-                var resolvedName: String = "—"
-
-                if id == "current",
-                   let dedicatedName = defaults?.string(forKey: "current_location_name"),
-                   !dedicatedName.isEmpty {
-                    resolvedName = dedicatedName
-                } else if let appName = savedNames[id], !appName.isEmpty {
-                    resolvedName = appName
-                } else if let geocoded = await geocodeCityName(lat: lat, lon: lon) {
-                    resolvedName = geocoded
-                } else {
-                    resolvedName = cached?.locationName ?? "—"
-                }
-
-                // Resolve the SF symbol and background condition using the same
-                // priority chain as the app's header (WeatherViewModel.currentSFSymbol):
-                //  1. Hourly "Now" slot WMO code — most reliable real-time source
-                //  2. OM top-level current WMO code
-                //  3. NOAA description as last-resort fallback for specificity
-                let cal = Calendar.current
-                let nowHour = allHourly.first(where: {
-                    cal.isDateInToday($0.time) &&
-                    cal.component(.hour, from: $0.time) == cal.component(.hour, from: Date())
-                })
-                let nowCode  = nowHour?.weatherCode ?? cur.weatherCode
-                let nowIsDay = nowHour.map { cal.component(.hour, from: $0.time) >= 6 &&
-                                            cal.component(.hour, from: $0.time) < 20 } ?? cur.isDay
-                let omSymbol = wmoSFSymbol(code: nowCode, isDay: nowIsDay)
-                // The hourly WMO code is the authoritative symbol source for the widget.
-                // Unlike the app header, we do NOT apply a NOAA tiebreaker here —
-                // cur.description is the station current-conditions label which can be
-                // stale or generic ("Fair", "Clear") even when WMO reports overcast,
-                // and would incorrectly override a correct cloudy/rain symbol.
-                let currentSymbol = omSymbol
-                // Background condition derived from the same WMO code so symbol
-                // and gradient always agree — used via wmoDescription() below.
-
-                // Top alert for the widget icon slot — highest severity wins.
-                // Color is stored as raw RGB doubles (Codable-safe; SwiftUI.Color is not).
-                let topAlert  = alerts.first
-                let alertCfg  = topAlert.map { NWSAlert.displayConfig(for: $0.event) }
-                let alertRGBA = alertCfg.map { UIColor($0.color).rgbaComponents }
-
-                let fresh = WidgetWeatherData(
-                    id:                 id,
-                    lat:                lat,
-                    lon:                lon,
-                    temperature:        cur.temperature,
-                    high:               firstDay.high,
-                    low:                firstDay.low,
-                    condition:          wmoDescription(code: nowCode, isDay: nowIsDay), // WMO-derived, consistent with sfSymbol
-                    sfSymbol:           currentSymbol,
-                    precipProbability:  firstDay.precipProbability,
-                    locationName:       resolvedName,
-                    windGusts:          cur.windGusts,
-                    isDay:              cur.isDay,
-                    accumDisplayString: firstDay.accumulation.hasAccumulation ? firstDay.accumulation.displayString() : nil,
-                    dayProse:           firstDay.dayProse,
-                    nightProse:         firstDay.nightProse,
-                    fetchedAt:          now,
-                    alertSymbol:        alertCfg?.symbol,
-                    alertColorRed:      alertRGBA?.r,
-                    alertColorGreen:    alertRGBA?.g,
-                    alertColorBlue:     alertRGBA?.b
-                )
-                fresh.save()
-                return Timeline(entries: [WeatherEntry(date: now, data: fresh)],
-                                policy: .after(now.addingTimeInterval(1800)))
-            } catch {
-                // Fetch failed — use stale cache if available, retry in 15 min
-            }
+        // Fetch fresh data.
+        if let entry = await fetchEntry(id: id, cached: cached) {
+            // Refresh again in 30 minutes, and also whenever these entries are consumed.
+            let nextRefresh = now.addingTimeInterval(1800)
+            return Timeline(entries: [entry], policy: .after(nextRefresh))
         }
 
-        return Timeline(entries: [WeatherEntry(date: now, data: cached ?? .placeholder)],
-                        policy: .after(now.addingTimeInterval(900)))
+        // Fetch failed — show stale cache and retry in 15 minutes.
+        return Timeline(
+            entries: [WeatherEntry(date: now, data: cached ?? .placeholder)],
+            policy: .after(now.addingTimeInterval(900))
+        )
+    }
+}
+
+// MARK: - Shared Fetch Logic
+
+/* Fetches live weather for a location ID and returns a WeatherEntry.
+ * Uses WeatherRepository.shared.fetchAll() — the exact same pipeline as the
+ * main app — so symbol, condition, temperature, and high/low are always derived
+ * by identical logic. Returns nil if coordinates can't be resolved or the fetch
+ * throws. Writes the result to the shared App Group cache on success.
+ */
+private func fetchEntry(id: String, cached: WidgetWeatherData?) async -> WeatherEntry? {
+    let now = Date()
+
+    // Resolve coordinates — ALWAYS prefer the App Group registry over cache.
+    // The device may have moved since the cache was written ("current" location),
+    // so we must read the freshest coordinates the main app has published.
+    // Cache lat/lon is used only as a last resort when the App Group has nothing.
+    let sharedDefaults = UserDefaults(suiteName: WidgetWeatherData.groupID)
+    let registry = sharedDefaults?.dictionary(forKey: "saved_location_coords") as? [String: String] ?? [:]
+    var lat: Double?
+    var lon: Double?
+    if let coords = registry[id]?.split(separator: ","), coords.count == 2 {
+        lat = Double(coords[0]); lon = Double(coords[1])
+    }
+    if lat == nil || lon == nil {
+        lat = cached?.lat
+        lon = cached?.lon
+    }
+    guard let lat, let lon else { return nil }
+
+    do {
+        // fetchAll() runs the full NOAA + Open-Meteo pipeline — same as the main app.
+        let (cur, days, allHourly, _, _, _, alerts) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
+        guard let firstDay = days.first else { return nil }
+
+        // Location name — prefer the dedicated current_location_name key for "current"
+        // (written by the main app's geocoder), then the saved names registry,
+        // then a fresh geocode, then stale cache as last resort.
+        let savedNames = sharedDefaults?.dictionary(forKey: "saved_location_names") as? [String: String] ?? [:]
+        var resolvedName: String
+        if id == "current",
+           let dedicatedName = sharedDefaults?.string(forKey: "current_location_name"),
+           !dedicatedName.isEmpty {
+            resolvedName = dedicatedName
+        } else if let appName = savedNames[id], !appName.isEmpty {
+            resolvedName = appName
+        } else if let geocoded = await geocodeCityName(lat: lat, lon: lon) {
+            resolvedName = geocoded
+        } else {
+            resolvedName = cached?.locationName ?? "—"
+        }
+
+        // SF symbol — mirrors WeatherViewModel.currentSFSymbol exactly:
+        //   1. wmoSFSymbol from the current-hour WMO code
+        //   2. noaaSFSymbol from cur.description when WMO returns a generic fallback
+        let cal = Calendar.current
+        let nowHour = allHourly.first(where: {
+            cal.isDateInToday($0.time) &&
+            cal.component(.hour, from: $0.time) == cal.component(.hour, from: Date())
+        })
+        let nowCode  = nowHour?.weatherCode ?? cur.weatherCode
+        let nowIsDay = nowHour.map {
+            let h = cal.component(.hour, from: $0.time)
+            return h >= 6 && h < 20
+        } ?? cur.isDay
+        let wmoSym = wmoSFSymbol(code: nowCode, isDay: nowIsDay)
+        let genericWMO: Set<String> = ["cloud.fill", "cloud.sun.fill", "cloud.moon.fill"]
+        let currentSymbol: String = {
+            if genericWMO.contains(wmoSym),
+               let noaaSym = noaaSFSymbol(condition: cur.description, isDay: nowIsDay) {
+                return noaaSym
+            }
+            return wmoSym
+        }()
+
+        // Alert icon for the widget header slot.
+        let topAlert = alerts.first
+        let alertCfg = topAlert.map { NWSAlert.displayConfig(for: $0.event) }
+        let alertRGBA = alertCfg.map { UIColor($0.color).rgbaComponents }
+
+        let fresh = WidgetWeatherData(
+            id:                 id,
+            lat:                lat,
+            lon:                lon,
+            temperature:        cur.temperature,       // NOAA station temp preferred by buildCurrentConditions
+            high:               firstDay.high,         // resolvedHigh from NOAA prose in buildDaily
+            low:                firstDay.low,          // resolvedLow  from NOAA prose in buildDaily
+            condition:          cur.description,       // NOAA-resolved label (not wmoDescription)
+            sfSymbol:           currentSymbol,
+            precipProbability:  firstDay.precipProbability,
+            locationName:       resolvedName,
+            windGusts:          cur.windGusts,
+            isDay:              cur.isDay,
+            accumDisplayString: firstDay.accumulation.hasAccumulation ? firstDay.accumulation.displayString() : nil,
+            dayProse:           firstDay.dayProse,
+            nightProse:         firstDay.nightProse,
+            fetchedAt:          now,
+            alertSymbol:        alertCfg?.symbol,
+            alertColorRed:      alertRGBA?.r,
+            alertColorGreen:    alertRGBA?.g,
+            alertColorBlue:     alertRGBA?.b
+        )
+        fresh.save()
+        return WeatherEntry(date: now, data: fresh)
+    } catch {
+        return nil
     }
 }
 
@@ -257,8 +314,6 @@ struct WeatherInfoPanel: View {
     let data: WidgetWeatherData
     private let settings = AppSettings.shared
 
-    // Reconstruct the alert color from stored RGBA components.
-    // SwiftUI.Color is not Codable, so raw doubles are stored and rebuilt here.
     private var alertColor: Color? {
         guard let r = data.alertColorRed,
               let g = data.alertColorGreen,
@@ -267,11 +322,9 @@ struct WeatherInfoPanel: View {
     }
 
     var body: some View {
-        // Outer VStack: location header pinned top, H/L pinned bottom,
-        // everything in between fills available space evenly.
         VStack(alignment: .leading, spacing: 0) {
-
-            // TOP: location name + NWS alert icon (highest severity, or empty)
+            
+            // TOP: Header (Pinned)
             HStack(spacing: 4) {
                 if data.id == "current" {
                     Image(systemName: "location.fill")
@@ -291,63 +344,65 @@ struct WeatherInfoPanel: View {
             }
             .shadow(color: .black.opacity(0.3), radius: 2)
 
-            // MIDDLE: symbol + precip + temperature
-            VStack(alignment: .center, spacing: 0) {
-                Spacer(minLength: data.precipProbability >= 20 ? 0 : 12)
+            // GAP A: Equal to Gap B
+            Spacer(minLength: 10)
 
-                VStack(spacing: 0) {
-                    Image(systemName: data.sfSymbol)
-                        .renderingMode(.original)
-                        .font(.system(size: 45))
-                        .scaledToFit()
-                        .frame(height: 45)
-                        .shadow(color: .black.opacity(0.3), radius: 2)
+            // MIDDLE: The Bundle (Centered between Header and Temp)
+            VStack(spacing: 2) {
+                let hasPrecip = data.precipProbability >= 20
+                
+                Image(systemName: data.sfSymbol)
+                    .renderingMode(.original)
+                    // Downsize icon slightly if precip is present (42 -> 34)
+                    .font(.system(size: hasPrecip ? 34 : 42))
+                    .frame(width: 45, height: hasPrecip ? 34 : 42)
+                    .shadow(color: .black.opacity(0.3), radius: 2)
 
-                    if data.precipProbability >= 20 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "drop.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.cyan)
-                            Text("\(data.precipProbability)%")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.cyan)
-                        }
-                        .shadow(color: .black.opacity(0.2), radius: 1)
+                if hasPrecip {
+                    Spacer(minLength: 2)
+                    
+                    HStack(spacing: 2) {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 10))
+                        Text("\(data.precipProbability)%")
+                            .font(.system(size: 11, weight: .bold))
                     }
+                    .foregroundStyle(.cyan)
+                    .transition(.opacity)
                 }
-                .frame(maxWidth: .infinity, minHeight: 52, maxHeight: 52, alignment: .top)
-
-                Spacer(minLength: data.precipProbability >= 20 ? 14 : 0)
-
-                Text("\(Int(settings.temperature(data.temperature).rounded()))°")
-                    .font(.system(size: 38, weight: .medium, design: .rounded))
-                    .shadow(color: .black.opacity(0.25), radius: 2)
-                    .frame(maxWidth: .infinity)
-
-                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
+            .frame(height: 42)
 
-            // BOTTOM: H/L or accumulation
-            Group {
+            // GAP B: Equal to Gap A
+            Spacer(minLength: 10)
+
+            Text("\(Int(settings.temperature(data.temperature).rounded()))°")
+                .font(.system(size: 38, weight: .medium, design: .rounded))
+                .shadow(color: .black.opacity(0.25), radius: 2)
+                .frame(maxWidth: .infinity)
+
+            // Separates Temp from Footer
+            //Spacer(minLength: 0)
+
+            // BOTTOM: H/L or Accumulation (Pinned)
+            VStack(alignment: .leading, spacing: 2) {
                 if let accum = data.accumDisplayString, !accum.isEmpty {
                     HStack(spacing: 4) {
                         Text(accum)
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.cyan.opacity(0.9))
                         Text("\(Int(settings.temperature(data.low).rounded()))° | \(Int(settings.temperature(data.high).rounded()))°")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.white.opacity(0.85))
                     }
-                    .shadow(color: .black.opacity(0.3), radius: 2)
                 } else {
                     Text("L:\(Int(settings.temperature(data.low).rounded()))°  H:\(Int(settings.temperature(data.high).rounded()))°")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
-                        .shadow(color: .black.opacity(0.3), radius: 2)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .shadow(color: .black.opacity(0.3), radius: 2)
         }
         .frame(maxWidth: .infinity, minHeight: 142, maxHeight: 142, alignment: .top)
     }

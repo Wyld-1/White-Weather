@@ -264,7 +264,9 @@ actor WeatherRepository {
             let resolvedHigh: Double = extractHighTemp(from: noaaData?.dayProse ?? "") ?? high
             let resolvedLow:  Double = extractLowTemp(from: noaaData?.nightProse ?? "") ?? low
 
-            let isCurrentlyDay = isToday ? current.isDay : true
+            // daySymbol always resolves with isDay:true — it represents the daytime
+            // period regardless of when the app is viewed.
+            let isCurrentlyDay = true
             let daySymbol: String = {
                 if !dayCond.isEmpty {
                     return noaaSFSymbol(condition: dayCond, isDay: isCurrentlyDay)

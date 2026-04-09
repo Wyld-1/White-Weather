@@ -12,6 +12,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import WidgetKit
 internal import CoreLocation
 
 extension Notification.Name {
@@ -67,6 +68,10 @@ struct WhiteoutWeatherApp: App {
                         guard newPhase == .active else { return }
                         Haptics.shared.prepareAll()
                         settings.syncFromStandard()
+                        // Tell WidgetKit to re-run timeline() for all widgets immediately.
+                        // This is the "user opened their phone" refresh hook — without it
+                        // WidgetKit only refreshes on its own schedule, not on app foreground.
+                        WidgetCenter.shared.reloadAllTimelines()
                         // If location access was revoked while the app was suspended
                         // and the user was on the current-location page, redirect them.
                         if locationManager.authorizationStatus == .denied ||

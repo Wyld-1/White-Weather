@@ -393,6 +393,7 @@ struct WeatherContentView: View {
     let viewModel: WeatherViewModel
     @Binding var selectedDay: DailyForecast?
     @EnvironmentObject private var settings: AppSettings
+    @State private var selectedAlert: NWSAlert?
     
     var body: some View {
         VStack(spacing: 12) {
@@ -413,19 +414,26 @@ struct WeatherContentView: View {
                                 }
                                 return cfg.title
                             }()
-                            WeatherAlertBanner(
-                                title:         title,
-                                message:       alert.headline,
-                                tintColor:     cfg.color,
-                                warningSymbol: cfg.symbol,
-                                severity:      alert.severity
-                            )
+                            Button {
+                                Haptics.shared.impact(.light)
+                                selectedAlert = alert
+                            } label: {
+                                WeatherAlertBanner(
+                                    title:         title,
+                                    message:       alert.headline,
+                                    tintColor:     cfg.color,
+                                    warningSymbol: cfg.symbol,
+                                    severity:      alert.severity
+                                )
+                            }
+                            .buttonStyle(.plain)
                             .padding(.horizontal, 16)
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
                 }
             }
+            .padding(.top, 2)
             .padding(.bottom, 4)
             
             // Hourly Forecast
@@ -472,6 +480,9 @@ struct WeatherContentView: View {
             Spacer(minLength: 40)
         }
         .padding(.top, 8)
+        .sheet(item: $selectedAlert) { alert in
+            AlertDetailSheet(alert: alert)
+        }
     }
 }
 
@@ -556,6 +567,75 @@ struct CurrentConditionsHeader: View {
 }
 
 // MARK: Alert Card
+
+/* Bottom sheet shown when the user taps a weather alert banner.
+ * Displays the full NWS descriptive text with a drag indicator at the top.
+ * Presented as a 1/3-height detent, expandable to large.
+ */
+struct AlertDetailSheet: View {
+    let alert: NWSAlert
+
+    var body: some View {
+        let cfg = alert.display
+
+        VStack(alignment: .leading, spacing: 0) {
+
+            // Drag indicator
+            Capsule()
+                .fill(Color.secondary.opacity(0.4))
+                .frame(width: 36, height: 5)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
+                .padding(.bottom, 16)
+
+            // Header: symbol + title
+            HStack(spacing: 12) {
+                Image(systemName: cfg.symbol)
+                    .font(.system(size: 28))
+                    .foregroundStyle(cfg.color)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cfg.title)
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Text(alert.severity == .unknown ? "Weather Alert" : alert.severity.label)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(cfg.color)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+
+            Divider().padding(.horizontal, 20)
+
+            // Full description text
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !alert.headline.isEmpty {
+                        Text(alert.headline)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    if !alert.description.isEmpty {
+                        Text(alert.description)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No additional details available.")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
+            }
+        }
+        .presentationDetents([.fraction(0.4), .large])
+        .presentationDragIndicator(.hidden)
+        .presentationCornerRadius(20)
+    }
+}
 
 struct WeatherAlertBanner: View {
     let title: String
@@ -1031,14 +1111,18 @@ struct CompassRose: View {
                 }
 
                 // Arrowhead (SF Symbol)
+                // The shaft ends at headPositionR + 4; position the symbol there.
+                // location.fill's visual tip is ~3pt above its geometric center,
+                // so nudge it outward by 3pt along destRad so the tip kisses the
+                // shaft end rather than sitting behind it.
+                let arrowR = headPositionR + 4 + 3
                 Image(systemName: "location.fill")
                     .font(.system(size: 15, weight: .black))
                     .foregroundStyle(.white)
                     .rotationEffect(.degrees(45) + .radians(destRad))
-                    .offset(x: -0.8, y: 0.8)
                     .position(
-                        x: cx + CGFloat(cos(destRad)) * headPositionR,
-                        y: cy + CGFloat(sin(destRad)) * headPositionR
+                        x: cx + CGFloat(cos(destRad)) * arrowR,
+                        y: cy + CGFloat(sin(destRad)) * arrowR
                     )
 
                 // Center Labels
@@ -1333,6 +1417,15 @@ struct DayDetailPage: View {
             VStack(alignment: .leading, spacing: 20) {
 
                 // Header: day name, H/L, symbol
+                // When day prose was substituted with night prose (evening/today-only case),
+                // dayProse == nightProse. In that case show the night symbol in the header.
+                let dayProseIsSubstituted = Calendar.current.isDateInToday(day.date)
+                    && !day.nightProse.isEmpty
+                    && day.dayProse == day.nightProse
+                let headerSymbol = dayProseIsSubstituted
+                    ? (day.nightSymbol ?? "moon.stars.fill")
+                    : day.daySymbol
+
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(fullDayName).font(.system(size: 22, weight: .semibold))
@@ -1346,7 +1439,7 @@ struct DayDetailPage: View {
                         }
                     }
                     Spacer()
-                    Image(systemName: day.daySymbol)
+                    Image(systemName: headerSymbol)
                         .symbolRenderingMode(.multicolor)
                         .font(.system(size: 48))
                 }
