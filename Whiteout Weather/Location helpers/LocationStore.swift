@@ -84,6 +84,13 @@ final class LocationStore {
         }
     }
 
+    /* Public: re-syncs the registry on foreground without reloading timelines.
+     * Called by WhiteoutWeatherApp on every .active scene-phase transition.
+     */
+    func syncRegistryToWidget() {
+        syncLocationRegistry()
+    }
+
     /* Syncs location registry and triggers a widget timeline reload. */
     private func syncToWidget() {
         syncLocationRegistry()

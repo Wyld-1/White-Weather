@@ -69,9 +69,12 @@ struct Provider: AppIntentTimelineProvider {
 
         // Fetch fresh data.
         if let entry = await fetchEntry(id: id, cached: cached) {
-            // Refresh again in 30 minutes.
+            // Build a second entry 30 minutes out using the same data.
+            // This lets WidgetKit advance the display on schedule even if
+            // the next timeline() call is delayed by budget pressure.
             let nextRefresh = now.addingTimeInterval(1800)
-            return Timeline(entries: [entry], policy: .after(nextRefresh))
+            let futureEntry = WeatherEntry(date: nextRefresh, data: entry.data)
+            return Timeline(entries: [entry, futureEntry], policy: .after(nextRefresh))
         }
 
         // Fetch failed — show stale cache (or placeholder) and retry soon.
@@ -138,8 +141,7 @@ private func fetchEntry(id: String, cached: WidgetWeatherData?) async -> Weather
     guard let lat, let lon else { return nil }
 
     do {
-        // fetchAll() runs the full NOAA + Open-Meteo pipeline — same as the main app.
-        let (cur, days, allHourly, _, _, _, alerts) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
+        let (cur, days, allHourly, _, _, _, alerts, _) = try await WeatherRepository.shared.fetchAll(lat: lat, lon: lon)
         guard let firstDay = days.first else { return nil }
 
         // Location name — prefer the dedicated current_location_name key for "current"
@@ -159,27 +161,24 @@ private func fetchEntry(id: String, cached: WidgetWeatherData?) async -> Weather
             resolvedName = cached?.locationName ?? "—"
         }
 
-        // SF symbol — mirrors WeatherViewModel.currentSFSymbol exactly:
-        //   1. wmoSFSymbol from the current-hour WMO code
-        //   2. noaaSFSymbol from cur.description when WMO returns a generic fallback
+        // SF symbol — mirrors WeatherViewModel.currentSFSymbol exactly.
+        // NOAA hourly shortForecast is the primary source; falls through to
+        // cur.description then WMO if the hourly slot is unavailable.
         let cal = Calendar.current
         let nowHour = allHourly.first(where: {
             cal.isDateInToday($0.time) &&
             cal.component(.hour, from: $0.time) == cal.component(.hour, from: Date())
         })
-        let nowCode  = nowHour?.weatherCode ?? cur.weatherCode
-        let nowIsDay = nowHour.map {
-            let h = cal.component(.hour, from: $0.time)
-            return h >= 6 && h < 20
-        } ?? cur.isDay
-        let wmoSym = wmoSFSymbol(code: nowCode, isDay: nowIsDay)
-        let genericWMO: Set<String> = ["cloud.fill", "cloud.sun.fill", "cloud.moon.fill"]
         let currentSymbol: String = {
-            if genericWMO.contains(wmoSym),
-               let noaaSym = noaaSFSymbol(condition: cur.description, isDay: nowIsDay) {
-                return noaaSym
+            // Pre-resolved table symbol is most accurate
+            if let h = nowHour, let sym = h.resolvedSymbol { return sym }
+            if let h = nowHour, let sym = noaaSFSymbol(condition: h.shortForecast, isDay: h.isDay) {
+                return sym
             }
-            return wmoSym
+            if let sym = noaaSFSymbol(condition: cur.description, isDay: cur.isDay) {
+                return sym
+            }
+            return wmoSFSymbol(code: cur.weatherCode, isDay: cur.isDay)
         }()
 
         // Alert icon for the widget header slot.

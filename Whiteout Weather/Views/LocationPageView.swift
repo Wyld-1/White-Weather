@@ -114,6 +114,7 @@ struct LocationPageView: View {
 
                             Text("Weather provided by NOAA and Open-Meteo")
                                 .font(.caption2)
+                                .bold()
                                 .foregroundStyle(.white.opacity(0.8))
                                 .shadow(color: .black, radius: 1)
                                 .padding(.bottom, 95)
@@ -122,8 +123,7 @@ struct LocationPageView: View {
                             LinearGradient(
                                 stops: [
                                     .init(color: .clear,         location: 0.00),
-                                    .init(color: .black.opacity(0.3), location: 0.02),
-                                    .init(color: .black,         location: 0.04),
+                                    .init(color: .black,         location: 0.02),
                                     .init(color: .black,         location: 1.00),
                                 ],
                                 startPoint: .top,
@@ -211,6 +211,52 @@ struct LocationPageView: View {
                 )
             }
         }
+        #if DEBUG
+        let _ = printTelemetry()
+        #endif
+    }
+    
+    private func printTelemetry() {
+        let cal = Calendar.current
+        let now = Date()
+        
+        // Safety check: Find the entries
+        let nowEntry = viewModel.hourlyTable.first(where: {
+            cal.isDateInToday($0.date) &&
+            cal.component(.hour, from: $0.date) == cal.component(.hour, from: now)
+        })
+        let nowHour = viewModel.hourly.first(where: {
+            cal.isDateInToday($0.time) &&
+            cal.component(.hour, from: $0.time) == cal.component(.hour, from: now)
+        })
+
+        let e = nowEntry
+        print("--- Phase 2 (Table) Telemetry ---")
+        print("Sky cover: \(e?.skyCoverPct.description ?? "—")%")
+        print("Precip potential: \(e?.precipPotentialPct.description ?? "—")%")
+        print("Rain: \(e?.rainPct.description ?? "—")%")
+        print("Snow: \(e?.snowPct.description ?? "—")%")
+        print("Thunder: \(e?.thunderPct.description ?? "—")%")
+        print("Fz rain: \(e?.freezingRainPct.description ?? "—")%")
+        print("Sleet: \(e?.sleetPct.description ?? "nil")%")
+        print("Humidity: \(e?.humidity.map { "\($0)%" } ?? "—")")
+        print("Wind: \(e?.windSpeedMph.map { "\($0) mph" } ?? "—")")
+        print("Gusts: \(e?.windGustMph.map { "\($0) mph" } ?? "—")")
+        print("Wind dir: \(e?.windDirection ?? "—")")
+        print("shortForecast: \(e?.shortForecast ?? "—")")
+        print("sfSymbol (tbl): \(e?.sfSymbol(isDay: nowHour?.isDay ?? true) ?? "—")")
+        
+        let h = nowHour
+        print("--- Phase 1 (Hourly) Telemetry ---")
+        print("resolvedSymbol: \(h?.resolvedSymbol ?? "—")")
+        print("shortForecast: \(h?.shortForecast ?? "—")")
+        print("isDay: \(h == nil ? "—" : (h!.isDay ? "true" : "false"))")
+
+        print("--- ViewModel State ---")
+        print("currentSFSymbol: \(viewModel.currentSFSymbol)")
+        print("weatherCondition: \(viewModel.weatherCondition.assetSuffix)")
+        print("timeOfDay: \(viewModel.weatherTimeOfDay.rawValue)")
+        print("Phase 2 loaded? \(viewModel.hourlyTable.isEmpty ? "NO" : "YES (\(viewModel.hourlyTable.count) hrs)")")
     }
 
     private func triggerFetch() {

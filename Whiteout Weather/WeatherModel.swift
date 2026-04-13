@@ -15,8 +15,94 @@ struct HourlyForecast: Identifiable {
     let id = UUID()
     let time: Date
     let temperature: Double
-    let weatherCode: Int
+    let shortForecast: String       // NOAA condition string, e.g. "Mostly Cloudy", "Rain And Snow Likely"
     let precipitationProbability: Int
+    let isDay: Bool                 // true when this hour is daylight at the forecast location
+    let resolvedSymbol: String?
+
+    init(time: Date, temperature: Double, shortForecast: String,
+         precipitationProbability: Int, isDay: Bool, resolvedSymbol: String? = nil) {
+        self.time = time
+        self.temperature = temperature
+        self.shortForecast = shortForecast
+        self.precipitationProbability = precipitationProbability
+        self.isDay = isDay
+        self.resolvedSymbol = resolvedSymbol
+    }
+}
+
+/* Rich per-hour data from NOAA's digital forecast table (FcstType=digital).
+ * This is the ground truth for hourly conditions — quantitative, per-type,
+ * sourced directly from the NWS gridded model output.
+ * Keyed by (date string "yyyy-MM-dd", localHour 0-23).
+ */
+struct NOAAHourlyTableEntry {
+    let date: Date              // start of this hour, in the location's local timezone
+    let localHour: Int          // 0-23, local time
+
+    // Temperature & moisture
+    let temperatureF: Double
+    let dewpointF: Double?
+    let humidity: Int?          // relative humidity %
+    let windChill: Double?      // °F, nil when above ~50°F
+
+    // Wind
+    let windSpeedMph: Int?
+    let windDirection: String?  // "N", "SW", etc.
+    let windGustMph: Int?       // nil when no gusts forecast
+
+    // Sky & general precip
+    let skyCoverPct: Int        // 0-100
+    let precipPotentialPct: Int // overall precip probability 0-100
+
+    // Precip type probabilities — stored as raw percentages
+    // Derived from NOAA bucket strings: --=0, SChc=20, Chc=35, Lkly=65, Def=85
+    let rainPct: Int
+    let thunderPct: Int
+    let snowPct: Int
+    let freezingRainPct: Int
+    let sleetPct: Int
+
+    /* Derives the best SF symbol for this hour from quantitative table data.
+     * Priority order matches meteorological severity, not alphabetical.
+     * isDay comes from the table entry itself (solar position at forecast time).
+     */
+    func sfSymbol(isDay: Bool) -> String {
+        // Mixed: snow and meaningful rain simultaneously
+        if snowPct >= 30 && rainPct >= 30  { return "cloud.sleet.fill" }
+        // Sleet / freezing rain
+        if sleetPct >= 20 || freezingRainPct >= 20 { return "cloud.sleet.fill" }
+        // Thunder
+        if thunderPct >= 20 { return rainPct >= 20 ? "cloud.bolt.rain.fill" : "cloud.bolt.fill" }
+        // Pure snow
+        if snowPct >= 65   { return "cloud.snow.fill" }
+        if snowPct >= 20   { return "cloud.snow.fill" }
+        // Rain intensity
+        if rainPct >= 65   { return skyCoverPct >= 80 ? "cloud.heavyrain.fill" : "cloud.rain.fill" }
+        if rainPct >= 30   { return skyCoverPct >= 70 ? "cloud.rain.fill" : (isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill") }
+        // Sky cover only
+        if skyCoverPct < 20 { return isDay ? "sun.max.fill"    : "moon.stars.fill" }
+        if skyCoverPct < 55 { return isDay ? "cloud.sun.fill"  : "cloud.moon.fill" }
+        if skyCoverPct < 80 { return "cloud.fill" }
+        return "cloud.fill"
+    }
+
+    /* Derives a shortForecast condition string for backward compat with noaaSFSymbol callers. */
+    var shortForecast: String {
+        if snowPct >= 30 && rainPct >= 30  { return "Rain And Snow" }
+        if sleetPct >= 20 { return "Sleet" }
+        if freezingRainPct >= 20 { return "Freezing Rain" }
+        if thunderPct >= 20 { return "Thunderstorm" }
+        if snowPct >= 65   { return "Snow" }
+        if snowPct >= 20   { return "Chance Snow" }
+        if rainPct >= 65   { return "Rain" }
+        if rainPct >= 20   { return "Chance of Rain" }
+        if skyCoverPct < 10 { return "Clear" }
+        if skyCoverPct < 30 { return "Mostly Clear" }
+        if skyCoverPct < 55 { return "Partly Cloudy" }
+        if skyCoverPct < 80 { return "Mostly Cloudy" }
+        return "Cloudy"
+    }
 }
 
 /* A single calendar day in the 7-day forecast. */
@@ -141,25 +227,35 @@ actor WeatherRepository {
      * @throws if the Open-Meteo fetch fails (NOAA failure is non-fatal)
      */
     func fetchAll(lat: Double, lon: Double) async throws -> (
-        CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod], Int, [NWSAlert]
+        CurrentConditions, [DailyForecast], [HourlyForecast], SunEvent, [String: NOAAScraper.ScrapedPeriod], Int, [NWSAlert], [NOAAHourlyTableEntry]
     ) {
-        // Fetch OM first so we have the location's real timezone before parsing
-        // NOAA periods. The NOAA scraper uses the timezone to seed its date cursor,
-        // which must match the location's local "today" — not the device's.
-        // Alerts are fetched concurrently and are best-effort — never block on failure.
-        async let omFetch   = OpenMeteoClient.shared.fetch(lat: lat, lon: lon)
+        // Phase 1: OM + alerts + NOAA prose all run concurrently.
+        // These are the fast fetches — OM and alerts are JSON APIs,
+        // prose scrape is one HTML page. Together ~1-2s.
+        async let omFetch     = OpenMeteoClient.shared.fetch(lat: lat, lon: lon)
         async let alertsFetch = NWSAlertClient.shared.fetchAlerts(lat: lat, lon: lon)
 
         let om     = try await omFetch
         let alerts = await alertsFetch
         let tz     = TimeZone(secondsFromGMT: om.utcOffsetSeconds) ?? .current
-        let noaa   = (try? await NOAAScraper.shared.fetchProse(lat: lat, lon: lon, tz: tz)) ?? [:]
 
-        let current   = buildCurrentConditions(om: om, noaa: noaa, tz: tz)
-        let allHourly = buildHourly(om: om, tz: tz)
-        let (daily, sun) = buildDaily(om: om, noaa: noaa, allHourly: allHourly, tz: tz, current: current)
+        let noaa = (try? await NOAAScraper.shared.fetchProse(lat: lat, lon: lon, tz: tz)) ?? [:]
 
-        return (current, daily, allHourly, sun, noaa, om.utcOffsetSeconds, alerts)
+        let current  = buildCurrentConditions(om: om, noaa: noaa, tz: tz)
+        // Phase 1 hourly: full OM hourly array (all days) as warm-start data.
+        // buildDaily uses this to populate hourlyTemps for all 7 days.
+        let omHourly = buildHourly(om: om, tz: tz)
+        let (daily, sun) = buildDaily(om: om, noaa: noaa, allHourly: omHourly, tz: tz, current: current)
+
+        return (current, daily, omHourly, sun, noaa, om.utcOffsetSeconds, alerts, [])
+    }
+
+    /* Phase 2: fetch the digital table and return enriched hourly data.
+     * Called by WeatherViewModel after phase 1 has already rendered the page.
+     * Returns nil on failure — caller keeps phase 1 data unchanged.
+     */
+    func fetchTable(lat: Double, lon: Double, tz: TimeZone) async -> [NOAAHourlyTableEntry]? {
+        await NOAADigitalTableScraper.shared.fetchTable(lat: lat, lon: lon, tz: tz)
     }
 
     /* Builds current conditions, preferring the NOAA tombstone label over the WMO description.
@@ -211,18 +307,21 @@ actor WeatherRepository {
         )
     }
 
-    /* Parses the Open-Meteo hourly array into typed HourlyForecast values.
-     * Temperatures are converted to the active unit system before returning.
+    /* Builds a full HourlyForecast array from Open-Meteo data covering all forecast days.
+     * Used as phase-1 warm data and as fallback when the table fails.
      */
     private func buildHourly(om: OpenMeteoResponse, tz: TimeZone) -> [HourlyForecast] {
         let fmt = localDateFormatter(format: "yyyy-MM-dd'T'HH:mm", tz: tz)
         return om.hourly.time.enumerated().compactMap { i, str in
             guard let date = fmt.date(from: str) else { return nil }
+            let h = Calendar.current.component(.hour, from: date)
+            let isDay = h >= 6 && h < 20
             return HourlyForecast(
                 time:                     date,
                 temperature:              om.hourly.temperature2m[i],
-                weatherCode:              om.hourly.weatherCode[i],
-                precipitationProbability: om.hourly.precipitationProbability[i]
+                shortForecast:            wmoDescription(code: om.hourly.weatherCode[i], isDay: isDay),
+                precipitationProbability: om.hourly.precipitationProbability[i],
+                isDay:                    isDay
             )
         }
     }
@@ -618,6 +717,230 @@ actor OpenMeteoClient {
         ]
         let (data, _) = try await URLSession.shared.data(from: c.url!)
         return try JSONDecoder().decode(OpenMeteoResponse.self, from: data)
+    }
+}
+
+// MARK: - NOAA Digital Table Scraper
+
+/* Scrapes the NOAA hourly digital forecast table (FcstType=digital).
+ * This is richer than any API — quantitative per-hour values for sky cover,
+ * precip type probabilities, humidity, dewpoint, wind, and gusts.
+ * Returns nil on failure so callers fall back to the NOAA hourly API or OM.
+ *
+ * HTML structure observed 2026-04:
+ *   Rows are <tr> elements. The first <td> in each row is the element label.
+ *   Subsequent <td> elements are hourly values, one per column.
+ *   Date and hour headers are in separate <tr> rows with class patterns.
+ *   Two 24-hour blocks are rendered per page (48 hours total).
+ */
+actor NOAADigitalTableScraper {
+    static let shared = NOAADigitalTableScraper()
+
+    func fetchTable(lat: Double, lon: Double, tz: TimeZone) async -> [NOAAHourlyTableEntry]? {
+        let latStr = String(format: "%.4f", lat)
+        let lonStr = String(format: "%.4f", lon)
+        guard let url = URL(string:
+            "https://forecast.weather.gov/MapClick.php?lat=\(latStr)&lon=\(lonStr)&FcstType=digital"
+        ) else { return nil }
+
+        var req = URLRequest(url: url)
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+                     forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let html = String(data: data, encoding: .utf8)
+        else {
+            print("[Phase2] columnDates.isEmpty — bailing")
+            return nil
+        }
+
+        return parse(html: html, tz: tz)
+    }
+
+    // MARK: - Parser
+
+    private func parse(html: String, tz: TimeZone) -> [NOAAHourlyTableEntry]? {
+        guard let doc = try? SwiftSoup.parse(html) else { return nil }
+        
+        // Skip table lookup — NOAA's malformed HTML causes SwiftSoup to miscount rows.
+        // The data rows are uniquely identifiable: exactly 25 <td> cells each.
+        let allRows = (try? doc.select("tr").array()) ?? []
+        let rows = allRows.filter { row in
+            let cells = (try? row.select("td").array()) ?? []
+            return cells.count == 25
+        }
+        guard !rows.isEmpty else { return nil }
+
+        // Build the timeline: parse date+hour header rows to get a Date for each column.
+        // The table has two 24-column blocks separated by a date/hour header row.
+        var columnDates: [Date] = []
+        var rawRows: [String: [String]] = [:] // label → column values
+        var currentDates: [Date] = []
+        var pendingHours: [Int] = []
+        var pendingDate: String = ""
+
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = tz
+        let dateFmt = DateFormatter()
+        dateFmt.locale = Locale(identifier: "en_US_POSIX")
+        dateFmt.timeZone = tz
+
+        for row in rows {
+            guard let cells = try? row.select("td").array(), !cells.isEmpty else { continue }
+            let firstText = (try? cells[0].text()) ?? ""
+
+            // Date header row: contains strings like "04/11"
+            if firstText == "Date" || firstText.contains("Date") {
+                // extract MM/DD values from subsequent cells
+                pendingDate = ""
+                for cell in cells.dropFirst() {
+                    let t = ((try? cell.text()) ?? "").trimmingCharacters(in: .whitespaces)
+                    if t.count == 5 && t.contains("/") {
+                        pendingDate = t
+                        break  // take the first date, not the last
+                    }
+                }
+                continue
+            }
+
+            // Hour header row: contains integers 0-23
+            if firstText == "Hour (PDT)" || firstText.contains("Hour (") {
+                pendingHours = []
+                for cell in cells.dropFirst() {
+                    if let h = Int((try? cell.text()) ?? "") {
+                        pendingHours.append(h)
+                    }
+                }
+                // Now build dates from pendingDate + pendingHours
+                if !pendingDate.isEmpty && !pendingHours.isEmpty {
+                    let parts = pendingDate.split(separator: "/")
+                    if parts.count == 2,
+                       let month = Int(parts[0]),
+                       let day   = Int(parts[1]) {
+                        let year = cal.component(.year, from: Date())
+                        var currentDay = day
+                        var lastHour = -1
+                        for h in pendingHours {
+                            if lastHour >= 0 && h < lastHour { currentDay += 1 }
+                            lastHour = h
+                            var comps = DateComponents()
+                            comps.year = year; comps.month = month; comps.day = currentDay; comps.hour = h
+                            comps.minute = 0; comps.second = 0
+                            if let d = cal.date(from: comps) {
+                                currentDates.append(d)
+                            }
+                        }
+                    }
+                    columnDates.append(contentsOf: currentDates)
+                    currentDates = []
+                }
+                continue
+            }
+
+            // Data row: first cell is the element label, rest are values
+            let label = firstText.trimmingCharacters(in: .whitespaces)
+            guard !label.isEmpty else { continue }
+            let values = cells.dropFirst().map { (try? $0.text()) ?? "" }
+            rawRows[label] = (rawRows[label] ?? []) + values
+        }
+
+        guard !columnDates.isEmpty else { return nil }
+
+        // Helper: safe index into a values array
+        func val(_ key: String, _ i: Int) -> String {
+            guard let arr = rawRows[key], i < arr.count else { return "" }
+            return arr[i].trimmingCharacters(in: .whitespaces)
+        }
+        func intVal(_ key: String, _ i: Int) -> Int? { Int(val(key, i)) }
+        func dblVal(_ key: String, _ i: Int) -> Double? { Double(val(key, i)) }
+
+        // Convert NOAA probability bucket string to a percentage
+        func pct(_ s: String) -> Int {
+            switch s.trimmingCharacters(in: .whitespaces) {
+            case "--", "": return 0
+            case "SChc":   return 20
+            case "Chc":    return 35
+            case "Lkly":   return 65
+            case "Def":    return 85
+            default:       return Int(s) ?? 0  // sometimes raw %
+            }
+        }
+
+        // Map row label variants to canonical keys
+        // (the exact label text varies slightly by region/season)
+        func find(_ candidates: [String]) -> String? {
+            candidates.first { rawRows[$0] != nil }
+        }
+
+        let tempKey    = find(["Temperature (°F)", "Temperature (°F)", "Temperature"]) ?? ""
+        let dewKey     = find(["Dewpoint (°F)", "Dewpoint (°F)", "Dewpoint"]) ?? ""
+        let wcKey      = find(["Wind Chill (°F)", "Wind Chill (°F)", "Wind Chill"]) ?? ""
+        let wsKey      = find(["Surface Wind (mph)", "Surface Wind"]) ?? ""
+        let wdKey      = find(["Wind Dir", "Wind Direction"]) ?? ""
+        let wgKey      = find(["Gust", "Wind Gust"]) ?? ""
+        let skyKey     = find(["Sky Cover (%)", "Sky Cover"]) ?? ""
+        let ppKey      = find(["Precipitation Potential (%)", "Precipitation Potential"]) ?? ""
+        let rhKey      = find(["Relative Humidity (%)", "Relative Humidity"]) ?? ""
+        let rainKey    = find(["Rain"]) ?? ""
+        let tstmKey    = find(["Thunder", "Thunderstorm"]) ?? ""
+        let snowKey    = find(["Snow"]) ?? ""
+        let fzraKey    = find(["Freezing Rain"]) ?? ""
+        let sleetKey   = find(["Sleet"]) ?? ""
+
+        var entries: [NOAAHourlyTableEntry] = []
+        for (i, date) in columnDates.enumerated() {
+            guard let tempF = dblVal(tempKey, i) else { continue }
+            let lh = cal.component(.hour, from: date)
+            entries.append(NOAAHourlyTableEntry(
+                date:             date,
+                localHour:        lh,
+                temperatureF:     tempF,
+                dewpointF:        dblVal(dewKey, i),
+                humidity:         intVal(rhKey, i),
+                windChill:        dblVal(wcKey, i),
+                windSpeedMph:     intVal(wsKey, i),
+                windDirection:    val(wdKey, i).isEmpty ? nil : val(wdKey, i),
+                windGustMph:      val(wgKey, i) == "--" || val(wgKey, i).isEmpty ? nil : intVal(wgKey, i),
+                skyCoverPct:      intVal(skyKey, i) ?? 0,
+                precipPotentialPct: intVal(ppKey, i) ?? 0,
+                rainPct:          pct(val(rainKey, i)),
+                thunderPct:       pct(val(tstmKey, i)),
+                snowPct:          pct(val(snowKey, i)),
+                freezingRainPct:  pct(val(fzraKey, i)),
+                sleetPct:         pct(val(sleetKey, i))
+            ))
+        }
+        return entries.isEmpty ? nil : entries
+    }
+}
+
+// MARK: - Hourly Table Conversion
+
+/* Converts a NOAAHourlyTableEntry array into HourlyForecast.
+ * Free function (nonisolated) — no actor hop needed, pure transformation.
+ * sunrise/sunset give accurate day/night per hour; falls back to clock hour.
+ */
+func buildHourlyFromTable(
+    _ table: [NOAAHourlyTableEntry],
+    sunrise: Date? = nil,
+    sunset: Date? = nil
+) -> [HourlyForecast] {
+    table.map { entry in
+        let isDay: Bool
+        if let rise = sunrise, let set = sunset {
+            isDay = entry.date >= rise && entry.date < set
+        } else {
+            isDay = entry.localHour >= 6 && entry.localHour < 20
+        }
+        return HourlyForecast(
+            time:                     entry.date,
+            temperature:              entry.temperatureF,
+            shortForecast:            entry.shortForecast,
+            precipitationProbability: entry.precipPotentialPct,
+            isDay:                    isDay,
+            resolvedSymbol:           entry.sfSymbol(isDay: isDay)
+        )
     }
 }
 

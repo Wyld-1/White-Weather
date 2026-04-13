@@ -433,7 +433,6 @@ struct WeatherContentView: View {
                     }
                 }
             }
-            .padding(.top, 2)
             .padding(.bottom, 4)
             
             // Hourly Forecast
@@ -795,14 +794,15 @@ struct HourlyCell: View {
         f.dateFormat = settings.is24Hour ? "HH" : "ha"
         return f.string(from: hour.time).lowercased()
     }
-    var isDay: Bool { let h = Calendar.current.component(.hour, from: hour.time); return h >= 6 && h < 20 }
 
     var body: some View {
         VStack(spacing: 6) {
             Text(timeLabel)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(0.8))
-            Image(systemName: wmoSFSymbol(code: hour.weatherCode, isDay: isDay))
+            Image(systemName: hour.resolvedSymbol
+                              ?? noaaSFSymbol(condition: hour.shortForecast, isDay: hour.isDay)
+                              ?? wmoSFSymbol(code: 2, isDay: hour.isDay))
                 .symbolRenderingMode(.multicolor)
                 .font(.system(size: 22)).frame(height: 26)
             Text("\(Int(settings.temperature(hour.temperature).rounded()))°")

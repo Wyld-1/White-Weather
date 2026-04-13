@@ -23,6 +23,7 @@ final class WeatherViewModel {
     var current: CurrentConditions?
     var daily: [DailyForecast] = []
     var hourly: [HourlyForecast] = []
+    var hourlyTable: [NOAAHourlyTableEntry] = []  // rich per-hour table data
     var sunEvent: SunEvent?
     var alerts: [NWSAlert] = []
 
@@ -65,34 +66,44 @@ final class WeatherViewModel {
     var dailyLow: Double?  { daily.first?.low }
 
     /* SF symbol for the current-conditions header.
-     * Priority chain:
-     *  1. wmoSFSymbol from the current-hour's OM weather code ("Now" slot in hourly)
-     *     — most reliable real-time source; avoids NOAA station N/A or stale labels
-     *  2. wmoSFSymbol from the top-level OM current weather code
-     *  3. noaaSFSymbol from the NOAA station description as a last-resort fallback
+     * Always sourced from the "Now" hourly slot so the header matches
+     * the hourly card exactly. Priority chain:
+     *  1. resolvedSymbol on the Now hourly slot (Phase 2 table — most accurate)
+     *  2. noaaSFSymbol from the Now slot's shortForecast (Phase 1 tombstone-derived)
+     *  3. noaaSFSymbol from cur.description (NOAA station observation)
+     *  4. wmoSFSymbol from the OM current weatherCode as last resort
+     *
+     * NOTE: the daily.daySymbol / nightSymbol shortcut was intentionally removed.
+     * Those symbols are resolved at fetch time with isDay:true/false baked in,
+     * causing a flash when Phase 2 arrives and can show the wrong icon at night.
+     * Deriving from the Now slot here keeps header, hourly card, and background
+     * in sync through both load phases.
      */
     var currentSFSymbol: String {
         guard let cur = current else { return "cloud.fill" }
         let cal = Calendar.current
-        // 1. Hourly "Now" slot — same symbol the hourly card shows for the current hour
+
+        // Accurate day/night: sunEvent if available, OM flag as fallback.
+        let isCurrentlyDay: Bool
+        if let sun = sunEvent {
+            let now = Date()
+            isCurrentlyDay = now >= sun.sunrise && now < sun.sunset
+        } else {
+            isCurrentlyDay = cur.isDay
+        }
+
+        // Now slot — prefer Phase 2 resolvedSymbol, then Phase 1 shortForecast.
         if let nowHour = hourly.first(where: {
             cal.isDateInToday($0.time) &&
             cal.component(.hour, from: $0.time) == cal.component(.hour, from: Date())
         }) {
-            let h = cal.component(.hour, from: nowHour.time)
-            let isDay = h >= 6 && h < 20
-            return wmoSFSymbol(code: nowHour.weatherCode, isDay: isDay)
+            if let sym = nowHour.resolvedSymbol { return sym }
+            if let sym = noaaSFSymbol(condition: nowHour.shortForecast, isDay: isCurrentlyDay) { return sym }
         }
-        // 2. OM top-level code
-        let omSymbol = wmoSFSymbol(code: cur.weatherCode, isDay: cur.isDay)
-        // Guard against the WMO fallback returning a generic cloud when NOAA
-        // has something more specific (e.g. thunderstorm, snow).
-        if let noaaSym = noaaSFSymbol(condition: cur.description, isDay: cur.isDay) {
-            // 3. NOAA description — only preferred over generic WMO fallbacks
-            let genericWMO = Set(["cloud.fill", "cloud.sun.fill", "cloud.moon.fill"])
-            if genericWMO.contains(omSymbol) { return noaaSym }
-        }
-        return omSymbol
+
+        // Station observation fallback
+        if let sym = noaaSFSymbol(condition: cur.description, isDay: isCurrentlyDay) { return sym }
+        return wmoSFSymbol(code: cur.weatherCode, isDay: isCurrentlyDay)
     }
 
     /* Populates minimal display state from cached widget data without a network fetch.
@@ -152,46 +163,102 @@ final class WeatherViewModel {
         isLoading = true
         errorMessage = nil
 
-        // For the current location (skipGeocode=false), always geocode — the coordinate
-        // may have changed since the cached name was written, and we never want to show
-        // a stale city name from a different location.
-        // For saved locations (skipGeocode=true), the name is already correct from LocationStore.
         if !skipGeocode {
             Task { await geocodeLocationName(for: coordinate) }
         }
 
+        // ── Phase 1: fast fetches (OM + prose + alerts) ─────────────────────
+        // Renders the full page immediately with WMO-backed hourly and tombstone symbol.
         do {
-            let (cur, days, allHourly, sun, scraped, utcOffset, fetchedAlerts) = try await WeatherRepository.shared.fetchAll(
-                lat: coordinate.latitude,
-                lon: coordinate.longitude
-            )
+            let (cur, days, allHourly, sun, scraped, utcOffset, fetchedAlerts, _) =
+                try await WeatherRepository.shared.fetchAll(
+                    lat: coordinate.latitude,
+                    lon: coordinate.longitude
+                )
 
-            current  = cur
-            daily    = days
-            sunEvent = sun
-            hourly   = hourlyWindow(from: allHourly)
-            alerts   = fetchedAlerts
-
-            // Prefer the NOAA tombstone for the current period (day or night).
-            // At night, dayCondition is gone — fall through to nightCondition,
-            // then to WMO. This prevents a clear-day tombstone from persisting
-            // into the evening and picking the wrong gradient.
-            let todayData = scraped[todayKey()]
-            let noaaCond: WeatherCondition?
-            if cur.isDay {
-                noaaCond = WeatherCondition.fromCondition(todayData?.dayCondition ?? "")
-            } else {
-                noaaCond = WeatherCondition.fromCondition(todayData?.nightCondition ?? "")
-                       ?? WeatherCondition.fromCondition(todayData?.dayCondition ?? "")
-            }
-            weatherCondition = noaaCond ?? WeatherCondition.fromWMO(code: cur.weatherCode)
+            current      = cur
+            daily        = days
+            sunEvent     = sun
+            hourly       = hourlyWindow(from: allHourly)
+            alerts       = fetchedAlerts
             utcOffsetSeconds = utcOffset
+
+            // Phase 1 background condition.
+            // Prefer the Now hourly slot's shortForecast so the background and the
+            // header symbol (also Now-slot-derived) always agree on the same source.
+            // Falls back to the tombstone condition, then WMO.
+            let nowHourPhase1 = hourlyWindow(from: allHourly).first(where: {
+                let cal = Calendar.current
+                return cal.isDateInToday($0.time) &&
+                    cal.component(.hour, from: $0.time) == cal.component(.hour, from: Date())
+            })
+            let todayData = scraped[todayKey()]
+            if let nowHour = nowHourPhase1,
+               let cond = WeatherCondition.fromCondition(nowHour.shortForecast) {
+                weatherCondition = cond
+            } else {
+                let isCurrentlyDayPhase1 = cur.isDay
+                let noaaCond: WeatherCondition?
+                if isCurrentlyDayPhase1 {
+                    noaaCond = WeatherCondition.fromCondition(todayData?.dayCondition ?? "")
+                } else {
+                    noaaCond = WeatherCondition.fromCondition(todayData?.nightCondition ?? "")
+                           ?? WeatherCondition.fromCondition(todayData?.dayCondition ?? "")
+                }
+                weatherCondition = noaaCond ?? WeatherCondition.fromWMO(code: cur.weatherCode)
+            }
 
             calculateGlobalBounds(days: days)
             saveCoordinates(id: locationID ?? "current", coord: coordinate)
-
             isLoading = false
             lastFetchTime = Date()
+
+            // ── Phase 2: digital table (slow, ~3-8s) ───────────────────────
+            // Patches hourly symbols and table data in place once the table arrives.
+            // If it fails, phase 1 data stays — no regression.
+            let tz = TimeZone(secondsFromGMT: utcOffset) ?? .current
+            if let table = await WeatherRepository.shared.fetchTable(
+                lat: coordinate.latitude,
+                lon: coordinate.longitude,
+                tz: tz
+            ), !table.isEmpty {
+                hourlyTable = table
+                let tableHourly = buildHourlyFromTable(
+                    table,
+                    sunrise: sunEvent?.sunrise,
+                    sunset:  sunEvent?.sunset
+                )
+                hourly = hourlyWindow(from: tableHourly)
+
+                // Rebuild daily.hourlyTemps with table data for temp graphs
+                let cal = Calendar.current
+                daily = daily.map { day in
+                    let temps = tableHourly.filter { cal.isDate($0.time, inSameDayAs: day.date) }
+                    guard !temps.isEmpty else { return day }
+                    return DailyForecast(
+                        id: day.id, date: day.date, high: day.high, low: day.low,
+                        precipProbability: day.precipProbability,
+                        shortForecast: day.shortForecast,
+                        dayProse: day.dayProse, nightProse: day.nightProse,
+                        accumulation: day.accumulation, precipType: day.precipType,
+                        isNightSevere: day.isNightSevere,
+                        daySymbol: day.daySymbol, nightSymbol: day.nightSymbol,
+                        rowNightSymbol: day.rowNightSymbol,
+                        hourlyTemps: temps
+                    )
+                }
+
+                // Update background condition from table's current hour
+                let nowCal = Calendar.current
+                if let nowEntry = table.first(where: {
+                    nowCal.isDateInToday($0.date) &&
+                    nowCal.component(.hour, from: $0.date) == nowCal.component(.hour, from: Date())
+                }) {
+                    if let cond = WeatherCondition.fromCondition(nowEntry.shortForecast) {
+                        weatherCondition = cond
+                    }
+                }
+            }
 
         } catch {
             errorMessage = "Failed to load weather: \(error.localizedDescription)"
@@ -204,12 +271,12 @@ final class WeatherViewModel {
 
     // MARK: Private
 
-    /* Filters all hourly data to the window from the current clock-hour through current hour + 12. */
+    /* Filters all hourly data to the window from the current clock-hour through current hour + 24. */
     private func hourlyWindow(from all: [HourlyForecast]) -> [HourlyForecast] {
         let cal = Calendar.current
         let now = Date()
         let start = cal.date(from: cal.dateComponents([.year, .month, .day, .hour], from: now)) ?? now
-        let end   = start.addingTimeInterval(12 * 3600)
+        let end   = start.addingTimeInterval(24 * 3600)
         return all.filter { $0.time >= start && $0.time <= end }
     }
 
