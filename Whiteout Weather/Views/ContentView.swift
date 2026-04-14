@@ -316,7 +316,9 @@ struct PageDotsView: View
 
 struct AddLocationPage: View {
     @Environment(LocationStore.self) private var store
+    @Environment(LocationManager.self) private var locationManager
     var onAdded: (() -> Void)? = nil
+    @State private var sunEvent: SunEvent? = nil
     @State private var showSearch = false
     @State private var isAnimating = false
 
@@ -325,7 +327,7 @@ struct AddLocationPage: View {
             // Add-location page: clear sky, time-of-day resolved from device clock.
             GradientBackgroundView(
                 condition: .clear,
-                timeOfDay: WeatherTimeOfDay.from(sun: nil, utcOffsetSeconds: TimeZone.current.secondsFromGMT())
+                timeOfDay: WeatherTimeOfDay.from(sun: sunEvent, utcOffsetSeconds: TimeZone.current.secondsFromGMT())
             )
 
             VStack(spacing: 30) {
@@ -384,6 +386,9 @@ struct AddLocationPage: View {
             .repeatForever(autoreverses: false)) { isAnimating = true } }
         .sheet(isPresented: $showSearch) { LocationSearchView(onAdded: onAdded)
             .environment(store) }
+        .task {
+            sunEvent = await fetchSunEventForAddPage(coordinate: locationManager.coordinate)
+        }
     }
 }
 
@@ -764,22 +769,23 @@ struct SunEventCell: View {
     @EnvironmentObject private var settings: AppSettings
     private var timeLabel: String {
         let f = DateFormatter()
-        f.dateFormat = settings.is24Hour ? "HH:mm" : "h:mma"
+        f.dateFormat = settings.is24Hour ? "HH:mm" : "h:mm"
         return f.string(from: time).lowercased()
     }
     var body: some View {
         VStack(spacing: 6) {
             Text(timeLabel)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(0.8))
             Image(systemName: isRise ? "sunrise.fill" : "sunset.fill")
                 .symbolRenderingMode(.multicolor)
-                .font(.system(size: 22)).frame(height: 26)
+                .font(.system(size: 22))
+                .frame(height: 26)
             Text(isRise ? "Sunrise" : "Sunset")
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.white.opacity(0.7))
         }
-        .frame(width: 62)
+        .frame(width: 58)
         .padding(.vertical, 6)
     }
 }
@@ -804,7 +810,8 @@ struct HourlyCell: View {
                               ?? noaaSFSymbol(condition: hour.shortForecast, isDay: hour.isDay)
                               ?? wmoSFSymbol(code: 2, isDay: hour.isDay))
                 .symbolRenderingMode(.multicolor)
-                .font(.system(size: 22)).frame(height: 26)
+                .font(.system(size: 22))
+                .frame(height: 26)
             Text("\(Int(settings.temperature(hour.temperature).rounded()))°")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.white)
@@ -1380,7 +1387,7 @@ struct DateStrip: View {
                     
                     // Sliding indicator bar
                     Capsule()
-                    .fill(Color.barrelRed)
+                    .fill(Color.orange)
                     .frame(width: 28, height: 4)
                         .offset(x: (CGFloat(currentIndex) * cellWidth) + (cellWidth / 2) - 14)
                         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: currentIndex)
@@ -1610,25 +1617,13 @@ struct InteractiveTempGraph: View {
                             .position(x: leftPad / 2, y: y)
                     }
 
-                    // Fill
-                    Path { path in
-                        path.move(to: CGPoint(x: cp[0].0, y: topPad + ph))
-                        path.addLine(to: CGPoint(x: cp[0].0, y: cp[0].1))
-                        catmullRomPath(into: &path, pts: cp)
-                        path.addLine(to: CGPoint(x: cp.last!.0, y: topPad + ph))
-                        path.closeSubpath()
-                    }
-                    .fill(LinearGradient(colors: [.barrelRed.opacity(0.30), .barrelRedLight.opacity(0.01)],
-                                        startPoint: .top, endPoint: .bottom))
-
                     // Stroke
                     Path { path in
                         path.move(to: CGPoint(x: cp[0].0, y: cp[0].1))
                         catmullRomPath(into: &path, pts: cp)
                     }
                     .stroke(
-                        LinearGradient(colors: [.barrelRed.opacity(0.8), .barrelRed],
-                                       startPoint: .leading, endPoint: .trailing),
+                        LinearGradient(colors: [.orange, .cyan], startPoint: .top, endPoint: .bottom),
                         style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round)
                     )
 
@@ -1670,9 +1665,11 @@ struct InteractiveTempGraph: View {
                         }
                         .stroke(Color.white.opacity(0.5),
                                 style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                        Circle().fill(Color.white).frame(width: 10, height: 10)
+                        Circle().fill(Color.white)
+                            .frame(width: 10, height: 10)
                             .position(x: pos.x, y: pos.y)
-                        Circle().fill(Color.barrelRed).frame(width: 6, height: 6)
+                        Circle().fill(.orange)
+                            .frame(width: 6, height: 6)
                             .position(x: pos.x, y: pos.y)
                         let bubbleX = min(max(pos.x, leftPad + 20), w - rightPad - 20)
                         Text("\(Int(temp))°")
@@ -1756,6 +1753,45 @@ struct CardHeader: View {
         Label(title, systemImage: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
             .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
     }
+}
+
+private func fetchSunEventForAddPage(coordinate: CLLocationCoordinate2D?) async -> SunEvent? {
+    var lat: Double
+    var lon: Double
+
+    if let coord = coordinate {
+        lat = coord.latitude
+        lon = coord.longitude
+    } else {
+        // IP geolocation fallback — no key required
+        guard let url = URL(string: "https://ipapi.co/json/"),
+              let (data, _) = try? await URLSession.shared.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ipLat = json["latitude"] as? Double,
+              let ipLon = json["longitude"] as? Double
+        else { return nil }
+        lat = ipLat
+        lon = ipLon
+    }
+
+    guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&daily=sunrise,sunset&forecast_days=1&timezone=auto"),
+          let (data, _) = try? await URLSession.shared.data(from: url),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let daily = json["daily"] as? [String: Any],
+          let sunriseArr = daily["sunrise"] as? [String],
+          let sunsetArr  = daily["sunset"]  as? [String],
+          let sunriseStr = sunriseArr.first,
+          let sunsetStr  = sunsetArr.first
+    else { return nil }
+
+    let fmt = DateFormatter()
+    fmt.dateFormat = "yyyy-MM-dd'T'HH:mm"
+    fmt.locale = Locale(identifier: "en_US_POSIX")
+    guard let sunrise = fmt.date(from: sunriseStr),
+          let sunset  = fmt.date(from: sunsetStr)
+    else { return nil }
+
+    return SunEvent(sunrise: sunrise, sunset: sunset)
 }
 
 #Preview {
