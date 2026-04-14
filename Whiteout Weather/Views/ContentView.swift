@@ -866,7 +866,9 @@ struct DailyRow: View {
     @EnvironmentObject private var settings: AppSettings
     
     private var dayName: String {
-        let f = DateFormatter(); f.dateFormat = "EEE"
+        let f = DateFormatter()
+        f.dateFormat = "EEE"
+        f.timeZone = TimeZone(identifier: day.timeZoneIdentifier) ?? .current
         return f.string(from: day.date)
     }
 
@@ -878,7 +880,7 @@ struct DailyRow: View {
         let dispGLow   = settings.temperature(globalLow)
 
         HStack(spacing: 0) {
-            Text(Calendar.current.isDateInToday(day.date) ? "Today" : dayName)
+            Text(isToday(day) ? "Today" : dayName)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.white)
                 .frame(width: 52, alignment: .leading)
@@ -1368,10 +1370,18 @@ struct DateStrip: View {
                                 }
                             } label: {
                                 VStack(spacing: 3) {
-                                    Text(Calendar.current.isDateInToday(days[i].date) ? "Today" : shortDay.string(from: days[i].date))
+                                    Text(isToday(days[i]) ? "Today" : {
+                                        let f = DateFormatter(); f.dateFormat = "EEE"
+                                        f.timeZone = TimeZone(identifier: days[i].timeZoneIdentifier) ?? .current
+                                        return f.string(from: days[i].date)
+                                    }())
                                         .font(.system(size: 11, weight: .regular))
                                         .foregroundStyle(.white.opacity(0.6))
-                                    Text(shortDate.string(from: days[i].date))
+                                    Text({
+                                        let f = DateFormatter(); f.dateFormat = "d"
+                                        f.timeZone = TimeZone(identifier: days[i].timeZoneIdentifier) ?? .current
+                                        return f.string(from: days[i].date)
+                                    }())
                                         .font(.system(size: 17, weight: .regular))
                                         .foregroundStyle(.white)
                                     
@@ -1401,6 +1411,7 @@ struct DateStrip: View {
         .frame(height: 60)
         .padding(.horizontal, 16)
     }
+    
 }
 
 // MARK: - Single Day Page (inside the paged TabView)
@@ -1412,7 +1423,9 @@ struct DayDetailPage: View {
     @EnvironmentObject private var settings: AppSettings
 
     private var fullDayName: String {
-        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f.string(from: day.date)
+        let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"
+        f.timeZone = TimeZone(identifier: day.timeZoneIdentifier) ?? .current
+        return f.string(from: day.date)
     }
 
     var body: some View {
@@ -1425,7 +1438,7 @@ struct DayDetailPage: View {
             VStack(alignment: .leading, spacing: 20) {
 
                 // Header: day name, H/L, symbol
-                let dayProseIsSubstituted = Calendar.current.isDateInToday(day.date)
+                let dayProseIsSubstituted = isToday(day)
                     && !day.nightProse.isEmpty
                     && day.dayProse == day.nightProse
                 let headerSymbol = dayProseIsSubstituted
@@ -1792,6 +1805,12 @@ private func fetchSunEventForAddPage(coordinate: CLLocationCoordinate2D?) async 
     else { return nil }
 
     return SunEvent(sunrise: sunrise, sunset: sunset)
+}
+
+private func isToday(_ day: DailyForecast) -> Bool {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: day.timeZoneIdentifier) ?? .current
+    return cal.isDateInToday(day.date)
 }
 
 #Preview {

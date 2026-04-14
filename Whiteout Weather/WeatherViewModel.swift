@@ -244,7 +244,8 @@ final class WeatherViewModel {
                         isNightSevere: day.isNightSevere,
                         daySymbol: day.daySymbol, nightSymbol: day.nightSymbol,
                         rowNightSymbol: day.rowNightSymbol,
-                        hourlyTemps: temps
+                        hourlyTemps: temps,
+                        timeZoneIdentifier: tz.identifier
                     )
                 }
 

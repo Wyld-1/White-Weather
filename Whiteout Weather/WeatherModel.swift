@@ -122,6 +122,7 @@ struct DailyForecast: Identifiable {
     let nightSymbol: String?    // SF symbol for the night period — set whenever night prose exists
     let rowNightSymbol: String? // night symbol shown in the 7-day row — only set when isNightSevere
     let hourlyTemps: [HourlyForecast]
+    let timeZoneIdentifier: String
 }
 
 struct CurrentConditions {
@@ -416,7 +417,8 @@ actor WeatherRepository {
                 daySymbol:        daySymbol,
                 nightSymbol:      nightSymbol,
                 rowNightSymbol:   rowNightSymbol,
-                hourlyTemps:      allHourly.filter { cal.isDate($0.time, inSameDayAs: date) }
+                hourlyTemps:      allHourly.filter { cal.isDate($0.time, inSameDayAs: date) },
+                timeZoneIdentifier: tz.identifier
             ))
         }
 
