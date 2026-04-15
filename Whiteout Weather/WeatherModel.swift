@@ -81,8 +81,8 @@ struct NOAAHourlyTableEntry {
         if rainPct >= 50   { return skyCoverPct >= 70 ? "cloud.rain.fill" : (isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill") }
         // Sky cover only
         if skyCoverPct < 20 { return isDay ? "sun.max.fill"    : "moon.stars.fill" }
-        if skyCoverPct < 55 { return isDay ? "cloud.sun.fill"  : "cloud.moon.fill" }
-        if skyCoverPct < 80 { return "cloud.fill" }
+        if skyCoverPct <= 65 { return isDay ? "cloud.sun.fill"  : "cloud.moon.fill" }
+        if skyCoverPct > 65 { return "cloud.fill" }
         return "cloud.fill"
     }
 
