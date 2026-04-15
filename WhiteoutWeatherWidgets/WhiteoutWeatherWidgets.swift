@@ -411,6 +411,7 @@ struct WeatherInfoPanel: View {
                             .font(.system(size: 11, weight: .bold))
                     }
                     .foregroundStyle(.cyan)
+                    .shadow(color: .black.opacity(0.3), radius: 2)
                     .transition(.opacity)
                 }
             }
@@ -432,12 +433,12 @@ struct WeatherInfoPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 if let accum = data.accumDisplayString, !accum.isEmpty {
                     HStack(spacing: 4) {
-                        Text(accum)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.cyan.opacity(0.9))
                         Text("\(Int(settings.temperature(data.low).rounded()))° | \(Int(settings.temperature(data.high).rounded()))°")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.white.opacity(0.85))
+                        Text(accum)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.cyan.opacity(0.9))
                     }
                 } else {
                     Text("L:\(Int(settings.temperature(data.low).rounded()))°  H:\(Int(settings.temperature(data.high).rounded()))°")
@@ -462,6 +463,9 @@ struct WidgetBackground: View {
         let resolvedTime = WeatherTimeOfDay.from(isDay: isDay)
         let colors = weatherGradientColors(condition: resolvedCondition, timeOfDay: resolvedTime)
         LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+        
+        // Darkens gradient for readability
+        Color.black.opacity(0.1)
     }
 }
 

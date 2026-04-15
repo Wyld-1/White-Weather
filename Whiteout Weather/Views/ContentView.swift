@@ -622,9 +622,26 @@ struct AlertDetailSheet: View {
                             .foregroundStyle(.primary)
                     }
                     if !alert.description.isEmpty {
-                        Text(alert.description)
-                            .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
+                        let sections = parseAlertSections(alert.description)
+                        if sections.isEmpty {
+                            Text(alert.description)
+                                .font(.system(size: 15))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 16) {
+                                ForEach(sections, id: \.0) { header, body in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(header)
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundStyle(cfg.color)
+                                        Text(body)
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.primary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         Text("No additional details available.")
                             .font(.system(size: 15))
@@ -1811,6 +1828,32 @@ private func isToday(_ day: DailyForecast) -> Bool {
     var cal = Calendar(identifier: .gregorian)
     cal.timeZone = TimeZone(identifier: day.timeZoneIdentifier) ?? .current
     return cal.isDateInToday(day.date)
+}
+
+private func parseAlertSections(_ text: String) -> [(String, String)] {
+    // NWS structured alerts use "* LABEL..." bullet format
+    let pattern = "\\*\\s*([A-Z][A-Z ]+?)\\.\\.\\.(.*?)(?=\\n\\s*\\*|\\z)"
+    guard let regex = try? NSRegularExpression(
+        pattern: pattern,
+        options: [.dotMatchesLineSeparators]
+    ) else { return [] }
+
+    let range = NSRange(text.startIndex..., in: text)
+    let matches = regex.matches(in: text, range: range)
+    guard !matches.isEmpty else { return [] }
+
+    return matches.compactMap { match in
+        guard let headerRange = Range(match.range(at: 1), in: text),
+              let bodyRange   = Range(match.range(at: 2), in: text)
+        else { return nil }
+        let header = String(text[headerRange])
+            .trimmingCharacters(in: .whitespaces)
+        let body = String(text[bodyRange])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+        return (header, body)
+    }
 }
 
 #Preview {

@@ -69,17 +69,16 @@ struct NOAAHourlyTableEntry {
      */
     func sfSymbol(isDay: Bool) -> String {
         // Mixed: snow and meaningful rain simultaneously
-        if snowPct >= 30 && rainPct >= 30  { return "cloud.sleet.fill" }
+        if snowPct >= 60 && rainPct >= 60  { return "cloud.sleet.fill" }
         // Sleet / freezing rain
-        if sleetPct >= 20 || freezingRainPct >= 20 { return "cloud.sleet.fill" }
+        if sleetPct >= 60 || freezingRainPct >= 60 { return "cloud.sleet.fill" }
         // Thunder
-        if thunderPct >= 20 { return rainPct >= 20 ? "cloud.bolt.rain.fill" : "cloud.bolt.fill" }
+        if thunderPct >= 50 { return rainPct >= 20 ? "cloud.bolt.rain.fill" : "cloud.bolt.fill" }
         // Pure snow
-        if snowPct >= 65   { return "cloud.snow.fill" }
-        if snowPct >= 20   { return "cloud.snow.fill" }
+        if snowPct >= 60   { return "cloud.snow.fill" }
         // Rain intensity
         if rainPct >= 65   { return skyCoverPct >= 80 ? "cloud.heavyrain.fill" : "cloud.rain.fill" }
-        if rainPct >= 30   { return skyCoverPct >= 70 ? "cloud.rain.fill" : (isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill") }
+        if rainPct >= 50   { return skyCoverPct >= 70 ? "cloud.rain.fill" : (isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill") }
         // Sky cover only
         if skyCoverPct < 20 { return isDay ? "sun.max.fill"    : "moon.stars.fill" }
         if skyCoverPct < 55 { return isDay ? "cloud.sun.fill"  : "cloud.moon.fill" }
