@@ -180,18 +180,9 @@ final class WeatherViewModel {
             daily        = days
             sunEvent     = sun
             hourly       = hourlyWindow(from: allHourly)
-            // Deduplicate: for alerts with the same event type, keep only the most recent.
-            // "Most recent" = latest onset, or if onset is unavailable, latest in the array
-            // (NWS returns alerts newest-first).
-            var seen: [String: NWSAlert] = [:]
-            for alert in fetchedAlerts {
-                let key = alert.event.lowercased()
-                if seen[key] == nil {
-                    seen[key] = alert
-                }
-            }
-            // Preserve original severity sort order
-            alerts = fetchedAlerts.filter { seen[$0.event.lowercased()]?.id == $0.id }
+            // Removes duplicate alerts
+            var seen = Set<String>()
+            alerts = fetchedAlerts.filter { seen.insert($0.event.lowercased()).inserted }
             utcOffsetSeconds = utcOffset
 
             // Phase 1 background condition.
@@ -254,9 +245,10 @@ final class WeatherViewModel {
                         accumulation: day.accumulation, precipType: day.precipType,
                         isNightSevere: day.isNightSevere,
                         daySymbol: day.daySymbol, nightSymbol: day.nightSymbol,
-                        rowNightSymbol: day.rowNightSymbol,
+                        rowNightSymbol: nil,
                         hourlyTemps: temps,
-                        timeZoneIdentifier: tz.identifier
+                        timeZoneIdentifier: tz.identifier,
+                        forecastBadge: day.forecastBadge
                     )
                 }
 

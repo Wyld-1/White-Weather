@@ -28,7 +28,6 @@ enum PrecipType {
         let hasSnow = text.contains("snow") || text.contains("flurr") ||
                       text.contains("blizzard") || text.contains("sleet") ||
                       text.contains("wintry mix")
-        // Exclude "snow shower" from the rain bucket — it contains "shower" but is snow.
         let hasRainShower = text.contains("shower") && !text.contains("snow shower")
         let hasRain = text.contains("rain") || hasRainShower || text.contains("drizzle")
         if hasSnow && hasRain { return .mixed }
@@ -112,7 +111,12 @@ nonisolated func noaaSFSymbol(condition: String, isDay: Bool) -> String? {
 
     func symbol(for s: String) -> String? {
         // Severe weather
-        if s.contains("thunder") || s.contains("tstm")                  { return "cloud.bolt.rain.fill" }
+        // Thunder only dominates when primary — not "also possible", "isolated", or "slight chance"
+        let thunderIsPrimary = (s.contains("thunder") || s.contains("tstm"))
+            && !s.contains("also possible")
+            && !s.contains("isolated thunder")
+            && !s.contains("slight chance of thunder")
+        if thunderIsPrimary                                              { return "cloud.bolt.rain.fill" }
         if s.contains("blizzard") || s.contains("heavy snow")           { return "wind.snow" }
         if s.contains("blowing snow") || s.contains("drifting snow")    { return "wind.snow" }
         if s.contains("freezing rain") || s.contains("fzra")            { return "cloud.sleet.fill" }
@@ -121,7 +125,7 @@ nonisolated func noaaSFSymbol(condition: String, isDay: Bool) -> String? {
         if s.contains("wintry mix") || s.contains("rain/snow") ||
            s.contains("rain and snow") || s.contains("snow and rain")   { return "cloud.sleet.fill" }
         
-        if s.contains("snow likely")                                    { return "cloud.snow.fill" }
+        if s.contains("snow likely")                                    { return "snowflake" }
 
         // Sky condition checked before generic precipitation, so that
         // "Chance Snow. Partly Sunny" correctly returns the sky icon.
@@ -133,9 +137,9 @@ nonisolated func noaaSFSymbol(condition: String, isDay: Bool) -> String? {
            s.contains("increasing clouds")                               { return "cloud.fill" }
 
         // Snow
-        if s.contains("snow shower")                                     { return "cloud.snow.fill" }
-        if s.contains("flurr")                                           { return "cloud.snow.fill" }
-        if s.contains("snow")                                            { return "cloud.snow.fill" }
+        if s.contains("snow shower")                                     { return "snowflake" }
+        if s.contains("flurr")                                           { return "snowflake" }
+        if s.contains("snow")                                            { return "snowflake" }
 
         // Rain
         if s.contains("heavy rain")                                      { return "cloud.heavyrain.fill" }
@@ -156,6 +160,209 @@ nonisolated func noaaSFSymbol(condition: String, isDay: Bool) -> String? {
     return symbol(for: dominant) ?? (parts.count > 1 ? symbol(for: c) : nil)
 }
 
+// MARK: - ForecastBadge
+
+/* Compact info nugget shown in the right side of DailyRow instead of temp bars.
+ * Surfaces the most relevant conditions for the day at a glance.
+ *
+ * mainSymbols:   up to 3 SF symbols for primary day conditions (timeline or chance).
+ *                The night severe symbol is included here, rendered monochromatically.
+ * nightSymbol:   set when a night symbol is part of the main group (rendered monochrome).
+ * chanceSymbols: secondary "chance of" or "also possible" symbols, shown right of a divider.
+ *
+ * Visual: [snow] [rain·night] | [thunder]
+ */
+struct ForecastBadge {
+    let mainSymbols: [String]      // multicolor, up to 3
+    let nightSymbol: String?       // which of mainSymbols is the night one (rendered monochrome)
+    let chanceSymbols: [String]    // shown after a " | " divider
+
+    var hasContent: Bool { !mainSymbols.isEmpty || !chanceSymbols.isEmpty }
+}
+
+// MARK: - ForecastBadge Extraction
+
+/* Builds a ForecastBadge from NOAA prose, tombstone conditions, and the night symbol.
+ *
+ * Priority within mainSymbols:
+ *  1. Timeline symbols ("then"-separated clauses), up to 3 distinct
+ *  2. Chance symbols from prose when no timeline
+ * Night symbol is appended to mainSymbols when isNightSevere.
+ * Secondary thunder/hazard ("also possible") goes into chanceSymbols.
+ *
+ * @param prose         NOAA day-period prose
+ * @param dayCond        tombstone condition for the day period
+ * @param nightSymbol    resolved night SF symbol (from nightSymbolResolved)
+ * @param isNightSevere  whether night conditions are notably different
+ */
+nonisolated func extractForecastBadge(
+    from prose: String,
+    dayCond: String,
+    nightSymbol: String?,
+    isNightSevere: Bool
+) -> ForecastBadge? {
+    var mainSymbols: [String] = []
+    var nightSym: String? = nil
+    var chanceSymbols: [String] = []
+
+    let lower = prose.lowercased()
+
+    // ── Step 1: Primary symbols from timeline or chance ──────────────────
+    if lower.contains(" then ") {
+        // Timeline: collect up to 3 distinct precip symbols from clauses
+        let thenPattern = "[,.]?\\s+then\\s+"
+        if let splitRegex = try? NSRegularExpression(pattern: thenPattern, options: .caseInsensitive) {
+            let nsStr = prose as NSString
+            let fullRange = NSRange(location: 0, length: nsStr.length)
+            var splitRanges: [NSRange] = []
+            splitRegex.enumerateMatches(in: prose, range: fullRange) { match, _, _ in
+                if let m = match { splitRanges.append(m.range) }
+            }
+            var clauses: [String] = []
+            var lastEnd = 0
+            for r in splitRanges {
+                clauses.append(nsStr.substring(with: NSRange(location: lastEnd, length: r.location - lastEnd)))
+                lastEnd = r.location + r.length
+            }
+            clauses.append(nsStr.substring(from: lastEnd))
+
+            var seen: [String] = []
+            for clause in clauses {
+                if let sym = timelineSymbol(for: clause), !seen.contains(sym) {
+                    seen.append(sym)
+                }
+            }
+            mainSymbols = Array(seen.prefix(3))
+        }
+    }
+
+    // If no timeline, try chance condition
+    if mainSymbols.isEmpty {
+        let dc = dayCond.lowercased()
+        let isChanceTombstone = dc.hasPrefix("chance ") || dc.hasPrefix("slight chance ")
+        let domCategory = weatherCategory(from: dc.isEmpty ? lower : dc)
+        let isSkyDominant = [WeatherCategory.clear, .mostlyClear, .partlyCloudy, .cloudy].contains(domCategory)
+
+        if isChanceTombstone || isSkyDominant {
+            // Prose pattern: "chance of X"
+            let pattern = "(?:slight )?chance of ([a-z\\s]+?)(?:\\.|,|$)"
+            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+               let match = regex.firstMatch(in: prose, range: NSRange(prose.startIndex..., in: prose)),
+               let capRange = Range(match.range(at: 1), in: prose) {
+                let fragment = String(prose[capRange]).trimmingCharacters(in: .whitespaces)
+                if let sym = timelineSymbol(for: fragment) { mainSymbols = [sym] }
+            }
+            // Tombstone fallback
+            if mainSymbols.isEmpty && isChanceTombstone {
+                let stripped = dc.hasPrefix("slight chance ")
+                    ? String(dc.dropFirst("slight chance ".count))
+                    : String(dc.dropFirst("chance ".count))
+                if let sym = timelineSymbol(for: stripped) { mainSymbols = [sym] }
+            }
+        }
+    }
+
+    // ── Step 2: Night symbol appended to main group ──────────────────────
+    if isNightSevere, let ns = nightSymbol {
+        // Cap mainSymbols at 2 to leave room for night
+        if mainSymbols.count > 2 { mainSymbols = Array(mainSymbols.prefix(2)) }
+        mainSymbols.append(ns)
+        nightSym = ns
+    }
+
+    // ── Step 3: Secondary chance symbols ("also possible", trailing "chance") ──
+    // Look for "also possible" thunder or secondary precip after the main condition
+    let alsoPossiblePattern = "([a-z\\s]+?)(?:is also possible|are also possible)"
+    if let regex = try? NSRegularExpression(pattern: alsoPossiblePattern, options: .caseInsensitive),
+       let match = regex.firstMatch(in: prose, range: NSRange(prose.startIndex..., in: prose)),
+       let capRange = Range(match.range(at: 1), in: prose) {
+        let fragment = String(prose[capRange])
+            .components(separatedBy: ".").last?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        if let sym = timelineSymbol(for: fragment), !mainSymbols.contains(sym) {
+            chanceSymbols.append(sym)
+        }
+    }
+
+    guard mainSymbols.hasContent || chanceSymbols.hasContent else { return nil }
+    // Need at least one symbol to be worth showing
+    guard !mainSymbols.isEmpty || !chanceSymbols.isEmpty else { return nil }
+
+    return ForecastBadge(
+        mainSymbols:  mainSymbols,
+        nightSymbol:  nightSym,
+        chanceSymbols: chanceSymbols
+    )
+}
+
+private extension Array {
+    var hasContent: Bool { !isEmpty }
+}
+
+// MARK: - Timeline Extraction
+
+/* Maps a raw NOAA condition phrase fragment to an SF symbol.
+ * Used by timeline and chance parsers — not the full noaaSFSymbol chain.
+ */
+private func timelineSymbol(for fragment: String) -> String? {
+    let f = fragment.lowercased()
+    // Thunder only dominates when it's primary, not a secondary "also possible" qualifier
+    let thunderIsPrimary = (f.contains("thunder") || f.contains("tstm"))
+        && !f.contains("also possible")
+        && !f.contains("slight chance of thunder")
+        && !f.contains("isolated thunder")
+    if thunderIsPrimary                                             { return "cloud.bolt.rain.fill" }
+    if f.contains("blizzard") || f.contains("heavy snow")          { return "wind.snow" }
+    if f.contains("freezing rain") || f.contains("fzra")           { return "cloud.sleet.fill" }
+    if f.contains("sleet") || f.contains("wintry mix")             { return "cloud.sleet.fill" }
+    if f.contains("rain") && f.contains("snow")                    { return "cloud.sleet.fill" }
+    if f.contains("snow shower") || f.contains("flurr")            { return "snowflake" }
+    if f.contains("snow")                                          { return "snowflake" }
+    if f.contains("heavy rain")                                    { return "cloud.heavyrain.fill" }
+    if f.contains("shower") || f.contains("rain")                  { return "cloud.rain.fill" }
+    if f.contains("drizzle")                                       { return "cloud.drizzle.fill" }
+    if f.contains("fog") || f.contains("mist")                     { return "cloud.fog.fill" }
+    return nil
+}
+
+/* Normalises a raw NOAA time phrase into a short display label.
+ * "11am" → "11am", "2pm" → "2pm", "noon" → "noon"
+ * "this afternoon" / "afternoon" → "aftn"
+ * "this morning" / "morning" → "morn"
+ * "this evening" / "evening" → "eve"
+ * "later" / "later today" → "later"
+ * "tonight" → "tonight"
+ */
+private func shortTimeLabel(_ raw: String) -> String {
+    let s = raw.lowercased().trimmingCharacters(in: .whitespaces)
+    // Clock time: "11am", "2pm", "11 am", "2 pm"
+    let clockPattern = "(\\d{1,2})(?::\\d{2})?\\s*(am|pm)"
+    if let regex = try? NSRegularExpression(pattern: clockPattern, options: .caseInsensitive),
+       let match = regex.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+       let hourRange = Range(match.range(at: 1), in: s),
+       let periodRange = Range(match.range(at: 2), in: s) {
+        return String(s[hourRange]) + String(s[periodRange])
+    }
+    if s.contains("afternoon")  { return "aftn" }
+    if s.contains("morning")    { return "morn" }
+    if s.contains("evening")    { return "eve" }
+    if s.contains("tonight")    { return "tonight" }
+    if s.contains("later")      { return "later" }
+    if s.contains("noon")       { return "noon" }
+    return s
+}
+
+/* Extracts a ConditionTimeline from NOAA prose.
+ *
+ * Handles patterns like:
+ *   "Snow before 9am, then rain"
+ *   "Rain before 11am, then showers and possibly a thunderstorm between 11am and 2pm, then rain after 2pm"
+ *   "Snow likely before noon, then a chance of sleet"
+ *
+ * Returns nil when fewer than 2 distinct precip segments are found.
+ * Does NOT fire for pure sky-condition prose ("Mostly sunny") — only when
+ * precip transitions are explicitly described.
+ */
 // MARK: - WeatherTimeOfDay
 
 /* Time-of-day slot used to select the background image.

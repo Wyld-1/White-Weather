@@ -13,8 +13,9 @@ internal import CoreLocation
 struct ContentView: View {
     @Environment(LocationStore.self) private var store
     @Environment(LocationManager.self) private var locationManager
+    @Namespace private var searchNamespace
     @Binding var selectedID: String?
-
+    
     // Whether the GPS/current-location page is shown.
     // Hidden when the user has explicitly denied or restricted location access.
     // Reactive: LocationManager publishes authorizationStatus changes live,
@@ -25,23 +26,21 @@ struct ContentView: View {
         default: return true
         }
     }
-
-    // Total dots: optionally Current + Saved + Add Page
-    private var pageCount: Int { (showCurrentPage ? 1 : 0) + store.saved.count + 1 }
-
+    
+    // Total dots: Current (optional) + Saved — no Add page
+    private var pageCount: Int { (showCurrentPage ? 1 : 0) + store.saved.count }
+    
     // Maps a selectedID string to the dot index, accounting for whether
     // the current-location page is present.
     private var currentIndex: Int {
         if showCurrentPage {
             if selectedID == "current" { return 0 }
-            if selectedID == "add" { return pageCount - 1 }
             if let idString = selectedID,
                let idx = store.saved.firstIndex(where: { $0.id.uuidString == idString }) {
                 return idx + 1
             }
             return 0
         } else {
-            if selectedID == "add" { return pageCount - 1 }
             if let idString = selectedID,
                let idx = store.saved.firstIndex(where: { $0.id.uuidString == idString }) {
                 return idx
@@ -49,12 +48,13 @@ struct ContentView: View {
             return 0
         }
     }
-
+    
     // Tracks whether the currently-visible page has a light background.
     // NOTE: PageDotsView always uses white indicators on a forced-dark glass,
     // so this state is kept for potential future use but does not affect the bar.
     @State private var isLightBackground = false
-
+    @State private var showSearch = false
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             TabView(selection: $selectedID) {
@@ -63,7 +63,7 @@ struct ContentView: View {
                     LocationPageView(savedLocation: nil, onBackgroundChange: { isLightBackground = $0 })
                         .tag("current" as String?)
                 }
-
+                
                 // Saved Location Pages
                 ForEach(store.saved) { loc in
                     LocationPageView(
@@ -74,34 +74,53 @@ struct ContentView: View {
                     )
                     .tag(loc.id.uuidString as String?)
                 }
-
-                // Add Location Page — always dark (clear day gradient)
-                AddLocationPage(onAdded: {
-                    if let newest = store.saved.last {
-                        selectedID = newest.id.uuidString
-                    }
-                })
-                .tag("add" as String?)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
-            // Reset brightness hint when swiping so there's no stale state
-            // while the new page is still loading.
-            .onChange(of: selectedID) { /* isLightBackground reset intentionally removed — bar is always dark */ }
+            .onChange(of: selectedID) { }
             
-            HStack {
-                Spacer()
-                PageDotsView(
-                    count: pageCount,
-                    currentIndex: currentIndex,
-                    isLightBackground: isLightBackground,
-                    showCurrentPage: showCurrentPage,
-                    onSelectIndex: { newIndex in
-                        selectedID = idForIndex(newIndex)
-                    }
-                )
-                Spacer()
+            if !showSearch {
+                // Bottom bar: page dots center, + button right
+                HStack(alignment: .bottom) {
+                    Spacer()
+                    PageDotsView(
+                        count: pageCount,
+                        currentIndex: currentIndex,
+                        isLightBackground: isLightBackground,
+                        showCurrentPage: showCurrentPage,
+                        onSelectIndex: { newIndex in
+                            selectedID = idForIndex(newIndex)
+                        })
+                    Spacer()
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    addButton
+                        .padding(.trailing, 24)
+                }
+                .transition(.opacity)
             }
+            
+            // Search overlay — sits above everything when active
+            WeatherSearchOverlay(
+                isActive: showSearch,
+                onDismiss: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        showSearch = false
+                    }
+                },
+                onAdded: { newID in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        showSearch = false
+                    }
+                    selectedID = newID
+                }
+            )
+            //.environment(store)
+            .opacity(showSearch ? 1 : 0)
+            .scaleEffect(showSearch ? 1 : 0.95, anchor: .bottom)
+            .allowsHitTesting(showSearch)
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showSearch)
+            .zIndex(10)
         }
         .onAppear {
             locationManager.requestLocation()
@@ -110,17 +129,59 @@ struct ContentView: View {
     
     private func idForIndex(_ index: Int) -> String? {
         let clamped = min(max(index, 0), pageCount - 1)
-
-        if clamped == pageCount - 1 { return "add" }
-
         if showCurrentPage {
             if clamped == 0 { return "current" }
             let savedIndex = clamped - 1
             guard store.saved.indices.contains(savedIndex) else { return "current" }
             return store.saved[savedIndex].id.uuidString
         } else {
-            guard store.saved.indices.contains(clamped) else { return "add" }
+            guard store.saved.indices.contains(clamped) else { return nil }
             return store.saved[clamped].id.uuidString
+        }
+    }
+    
+    @ViewBuilder
+    private var addButton: some View {
+        if #available(iOS 26.0, *) {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    showSearch = true
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .simultaneousGesture(TapGesture().onEnded {
+                Haptics.shared.impact(.medium)
+            })
+        } else {
+            Button {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    showSearch = true
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background {
+                        Circle()
+                            .fill(Color.black.opacity(0.30))
+                            .background(Circle().fill(.ultraThinMaterial))
+                            .overlay(
+                                Circle()
+                                    .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                            )
+                    }
+                    .matchedGeometryEffect(id: "searchBar", in: searchNamespace)
+            }
+            .simultaneousGesture(TapGesture().onEnded {
+                Haptics.shared.impact(.medium)
+            })
         }
     }
 }
@@ -202,15 +263,6 @@ struct PageDotsView: View
                 .animation(.easeInOut(duration: 0.16), value: displayIndex)
                 .animation(.easeInOut(duration: 0.3), value: isLightBackground)
         }
-        else if index == count - 1
-        {
-            Image(systemName: "plus")
-                .font(.system(size: iconSize, weight: .heavy))
-                .foregroundStyle(isSelected ? primaryColor : secondaryColor)
-                .scaleEffect(isSelected ? 1.08 : 1.0)
-                .animation(.easeInOut(duration: 0.16), value: displayIndex)
-                .animation(.easeInOut(duration: 0.3), value: isLightBackground)
-        }
         else
         {
             Circle()
@@ -251,7 +303,6 @@ struct PageDotsView: View
     {
         if #available(iOS 26.0, *)
         {
-            // Liquid glass renders its own specular border; no manual stroke needed.
             EmptyView()
         }
         else
@@ -309,86 +360,6 @@ struct PageDotsView: View
         let progress = x / width
         let rawIndex = progress * CGFloat(count - 1)
         return min(max(Int(round(rawIndex)), 0), count - 1)
-    }
-}
-
-// MARK: - Add Location Page
-
-struct AddLocationPage: View {
-    @Environment(LocationStore.self) private var store
-    @Environment(LocationManager.self) private var locationManager
-    var onAdded: (() -> Void)? = nil
-    @State private var sunEvent: SunEvent? = nil
-    @State private var showSearch = false
-    @State private var isAnimating = false
-
-    var body: some View {
-        ZStack {
-            // Add-location page: clear sky, time-of-day resolved from device clock.
-            GradientBackgroundView(
-                condition: .clear,
-                timeOfDay: WeatherTimeOfDay.from(sun: sunEvent, utcOffsetSeconds: TimeZone.current.secondsFromGMT())
-            )
-
-            VStack(spacing: 30) {
-                Spacer()
-                
-                Group {
-                    if #available(iOS 26.0, *) {
-                        Button(action: {
-                            Haptics.shared.impact(.medium)
-                            showSearch = true
-                        }) {
-                            Label("Add Location", systemImage: "plus")
-                                .bold()
-                                .labelStyle(.iconOnly)
-                                .foregroundStyle(.white)
-                                .font(.system(size: 50, weight: .ultraLight))
-                                .frame(width: 80, height: 80)
-                        }
-                        .buttonStyle(.glassProminent)
-                        .tint(.blue)
-                        .buttonBorderShape(.circle)
-                        .shadow(color: .blue.opacity(0.5), radius: 20)
-                    } else {
-                        Button {
-                            Haptics.shared.impact(.medium)
-                            showSearch = true
-                        } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.accentColor)
-                                        .frame(width: 84, height: 84)
-                                        .shadow(color: .blue.opacity(0.5), radius: 20)
-                                    
-                                    Image(systemName: "plus")
-                                        .font(.system(size: 36, weight: .light))
-                                        .foregroundStyle(.white)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                .padding(.bottom, 120)
-
-                VStack(spacing: 8) {
-                    Text("Add Location")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                    Text("Track your local mountains, \ncities, and favorites.").font(.system(size: 17))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                Spacer()
-            }
-        }
-        .onAppear { withAnimation(.easeInOut(duration: 2)
-            .repeatForever(autoreverses: false)) { isAnimating = true } }
-        .sheet(isPresented: $showSearch) { LocationSearchView(onAdded: onAdded)
-            .environment(store) }
-        .task {
-            sunEvent = await fetchSunEventForAddPage(coordinate: locationManager.coordinate)
-        }
     }
 }
 
@@ -629,7 +600,9 @@ struct AlertDetailSheet: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             VStack(alignment: .leading, spacing: 16) {
-                                ForEach(sections, id: \.0) { header, body in
+                                ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                                    let header = section.0
+                                    let body = section.1
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(header)
                                             .font(.system(size: 11, weight: .bold))
@@ -911,9 +884,7 @@ struct DailyRow: View {
                     
                     if day.precipProbability >= 20 {
                         HStack(spacing: 3) {
-                            // Use raindrop for rain and mixed (rain+snow).
-                            // Only pure snow gets the snowflake.
-                            Image(systemName: day.precipType == .snow ? "snowflake" : "drop.fill")
+                            Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
                                 .symbolRenderingMode(.multicolor)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.cyan)
@@ -924,14 +895,6 @@ struct DailyRow: View {
                         .frame(width: 42, alignment: .center)
                     }
                 }
-                
-                if let nightSym = day.rowNightSymbol {
-                    Image(systemName: nightSym)
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(.white.opacity(0.5))
-                        .font(.system(size: 18))
-                        .offset(x: 9)
-                }
             }
             .frame(width: 60, alignment: .leading)
 
@@ -939,11 +902,50 @@ struct DailyRow: View {
 
             if day.accumulation.hasAccumulation {
                 HStack(spacing: 6) {
-                    // Same logic as the probability icon: only pure snow gets the snowflake.
-                    Image(systemName: day.precipType == .snow ? "snowflake" : "drop.fill")
-                        .font(.system(size: 12, weight: .bold)).foregroundStyle(.cyan)
+                    Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.cyan)
                     Text(day.accumulation.displayString(settings: settings))
-                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(.cyan)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.cyan)
+                    Text("\(Int(dispLow.rounded()))° | \(Int(dispHigh.rounded()))°")
+                        .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                        .frame(width: 60, alignment: .trailing)
+                }
+            } else if let badge = day.forecastBadge, badge.hasContent {
+                HStack(spacing: 8) {
+                    // Forecast badge capsule
+                    HStack(spacing: 6) {
+                        // Main symbols
+                        ForEach(Array(badge.mainSymbols.enumerated()), id: \.offset) { _, sym in
+                            let isNight = sym == badge.nightSymbol
+                            Image(systemName: sym)
+                                .symbolRenderingMode(isNight ? .monochrome : .multicolor)
+                                .foregroundStyle(isNight ? .white.opacity(0.5) : .primary)
+                                .font(.system(size: 17))
+                        }
+                    
+                        // Divider + chance symbols
+                        if !badge.chanceSymbols.isEmpty {
+                            Text("|")
+                                .font(.system(size: 15, weight: .light))
+                                .foregroundStyle(.white.opacity(0.3))
+                                .padding(.horizontal, 1)
+                        
+                            ForEach(Array(badge.chanceSymbols.enumerated()), id: \.offset) { _, sym in
+                                Image(systemName: sym)
+                                    .symbolRenderingMode(.multicolor)
+                                    .font(.system(size: 15))
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 6)
+                    .background(Capsule()
+                        .fill(Color.white.opacity(0.04))
+                    )
+                    
+                    // Low | High text
                     Text("\(Int(dispLow.rounded()))° | \(Int(dispHigh.rounded()))°")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.6))
                         .frame(width: 60, alignment: .trailing)
@@ -974,17 +976,31 @@ struct TempRangeBar: View {
     var body: some View {
         GeometryReader { geo in
             let range = max(globalHigh - globalLow, 1)
+            // Percentage positions (0.0 to 1.0)
             let s = max(0, min(1, (low  - globalLow) / range))
             let e = max(0, min(1, (high - globalLow) / range))
             let w = geo.size.width
             
             ZStack(alignment: .leading) {
+                // Background Track
                 Capsule().fill(.white.opacity(0.2))
-                Capsule()
-                    .fill(LinearGradient(colors: [.cyan, .yellow, .orange],
-                                         startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(6, (e - s) * w), height: 7)
-                    .offset(x: s * w)
+                
+                // Fill the full width so the colors stay pinned to the global range
+                LinearGradient(
+                    colors: [.cyan, .yellow, .orange],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .mask(
+                    // Use an alignment: .leading container to ensure offset starts from 0
+                    ZStack(alignment: .leading) {
+                        Color.clear // Defines the coordinate space
+                        
+                        Capsule()
+                            .frame(width: max(6, (e - s) * w), height: 7)
+                            .offset(x: s * w)
+                    }
+                )
             }
         }
     }
@@ -1448,8 +1464,10 @@ struct DayDetailPage: View {
     var body: some View {
         let dispHigh  = settings.temperature(day.high)
         let dispLow   = settings.temperature(day.low)
+        /*
         let dispGHigh = settings.temperature(globalHigh)
         let dispGLow  = settings.temperature(globalLow)
+         */
 
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 20) {
@@ -1463,15 +1481,26 @@ struct DayDetailPage: View {
                     : day.daySymbol
 
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(fullDayName).font(.system(size: 22, weight: .semibold))
-                        HStack(spacing: 16) {
-                            Label("\(Int(dispLow.rounded()))°", systemImage: "arrow.down")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.cyan)
-                            Label("\(Int(dispHigh.rounded()))°", systemImage: "arrow.up")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(fullDayName)
+                            .font(.system(size: 22, weight: .semibold))
+                        HStack(spacing: 10) {
+                            Text("L: \(Int(dispLow.rounded()))°")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.cyan.opacity(0.6), in: Capsule())
+                                .overlay(Capsule().stroke(.cyan.opacity(0.9), lineWidth: 2))
+                            
+                            Text("H: \(Int(dispHigh.rounded()))°")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.6), in: Capsule())
+                                .overlay(Capsule().stroke(.orange.opacity(0.9), lineWidth: 2))
+                        
                         }
                     }
                     Spacer()
@@ -1483,6 +1512,7 @@ struct DayDetailPage: View {
                 .padding(.top, 16)
 
                 // Hourly temperature graph
+                /*
                 if !day.hourlyTemps.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("TEMPERATURE")
@@ -1496,11 +1526,12 @@ struct DayDetailPage: View {
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
                     .padding(.horizontal, 16)
                 }
+                 */
 
                 // Accumulation callout
                 if day.accumulation.hasAccumulation {
                     HStack(spacing: 8) {
-                        Image(systemName: day.precipType == .snow ? "snowflake" : "drop.fill")
+                        Image(systemName: day.precipType == .rain ? "drop.fill" : "snowflake")
                             .foregroundStyle(.cyan)
                         Text("Accumulation: \(day.accumulation.displayString(settings: settings))")
                             .font(.system(size: 15, weight: .semibold)).foregroundStyle(.cyan)
@@ -1544,11 +1575,14 @@ struct ForecastProseCard: View {
             HStack(spacing: 8) {
                 Image(systemName: symbol)
                     .symbolRenderingMode(.multicolor)
-                    .font(.system(size: 17))
+                    .font(.system(size: 20))
+                    .frame(width: 32)
                 Text(label)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
+            .padding(.top, -6)
+            Divider()
             Text(prose)
                 .font(.system(size: 15))
                 .foregroundStyle(.primary)

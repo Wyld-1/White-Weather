@@ -379,13 +379,16 @@ struct WeatherInfoPanel: View {
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(1)
                 Spacer()
+                // alert
+            }
+            .shadow(color: .black.opacity(0.3), radius: 2)
+            .overlay(alignment: .topTrailing) {
                 if let symbol = data.alertSymbol, let color = alertColor {
                     Image(systemName: symbol)
                         .font(.system(size: 20))
                         .foregroundStyle(color)
                 }
             }
-            .shadow(color: .black.opacity(0.3), radius: 2)
 
             // GAP A: Equal to Gap B
             Spacer(minLength: 10)

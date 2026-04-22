@@ -75,9 +75,9 @@ struct NOAAHourlyTableEntry {
         // Thunder
         if thunderPct >= 50 { return rainPct >= 20 ? "cloud.bolt.rain.fill" : "cloud.bolt.fill" }
         // Pure snow
-        if snowPct >= 60   { return "cloud.snow.fill" }
+        if snowPct >= 60   { return "snowflake" }
         // Rain intensity
-        if rainPct >= 65   { return skyCoverPct >= 80 ? "cloud.heavyrain.fill" : "cloud.rain.fill" }
+        if rainPct >= 65   { return "cloud.rain.fill" }
         if rainPct >= 50   { return skyCoverPct >= 70 ? "cloud.rain.fill" : (isDay ? "cloud.sun.rain.fill" : "cloud.moon.rain.fill") }
         // Sky cover only
         if skyCoverPct < 20 { return isDay ? "sun.max.fill"    : "moon.stars.fill" }
@@ -122,6 +122,7 @@ struct DailyForecast: Identifiable {
     let rowNightSymbol: String? // night symbol shown in the 7-day row — only set when isNightSevere
     let hourlyTemps: [HourlyForecast]
     let timeZoneIdentifier: String
+    let forecastBadge: ForecastBadge?
 }
 
 struct CurrentConditions {
@@ -365,12 +366,56 @@ actor WeatherRepository {
             let resolvedHigh: Double = extractHighTemp(from: noaaData?.dayProse ?? "") ?? high
             let resolvedLow:  Double = extractLowTemp(from: noaaData?.nightProse ?? "") ?? low
 
-            // daySymbol always resolves with isDay:true — it represents the daytime
-            // period regardless of when the app is viewed.
+            // Accumulation — needed for both daySymbol logic and badge building
+            let accum = extractAccumulationRange(from: dayProse) + extractAccumulationRange(from: noaaData?.nightProse ?? "")
+
+            // daySymbol resolution:
+            // 1. Strip "Chance"/"Slight Chance" prefix from tombstone so sky wins.
+            // 2. When a conditionTimeline exists, extract sky condition from prose
+            //    (text after the last period before the high temp mention) so that
+            //    mid-prose severe weather doesn't bleed into the day icon.
             let isCurrentlyDay = true
+            let dayCondForSymbol: String = {
+                let dc = dayCond.lowercased()
+                if dc.hasPrefix("slight chance ") { return String(dayCond.dropFirst("Slight Chance ".count)) }
+                if dc.hasPrefix("chance ")        { return String(dayCond.dropFirst("Chance ".count)) }
+                return dayCond
+            }()
+
+            // When a timeline was extracted, derive the day symbol from the sky-condition
+            // sentence in the prose (e.g. "Mostly cloudy") rather than the full prose,
+            // which may contain severe-weather words from the transition clauses.
+            let skyConditionForSymbol: String = {
+                // The sky sentence follows the transition clause block — look for
+                // the first sentence that contains a sky-cover keyword and no precip.
+                let sentences = dayProse.components(separatedBy: ". ")
+                let skyKeywords = ["sunny", "cloudy", "clear", "fair", "overcast",
+                                   "mostly", "partly", "increasing clouds"]
+                for sentence in sentences {
+                    let sl = sentence.lowercased()
+                    let hasSky = skyKeywords.contains(where: { sl.contains($0) })
+                    let hasPrecip = ["rain", "snow", "thunder", "sleet", "shower",
+                                     "drizzle", "flurr"].contains(where: { sl.contains($0) })
+                    if hasSky && !hasPrecip { return sentence }
+                }
+                return ""
+            }()
+
             let daySymbol: String = {
-                if !dayCond.isEmpty {
-                    return noaaSFSymbol(condition: dayCond, isDay: isCurrentlyDay)
+                // If tombstone is available and non-chance, use it directly
+                if !dayCondForSymbol.isEmpty && dayCondForSymbol == dayCond {
+                    return noaaSFSymbol(condition: dayCondForSymbol, isDay: isCurrentlyDay)
+                        ?? wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
+                }
+                // If badge will be shown (chance/timeline), prefer sky sentence from prose
+                let willHaveBadge = !accum.hasAccumulation
+                if willHaveBadge && !skyConditionForSymbol.isEmpty {
+                    return noaaSFSymbol(condition: extractConditionLabel(from: skyConditionForSymbol), isDay: isCurrentlyDay)
+                        ?? wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
+                }
+                // Chance condition: use stripped tombstone
+                if !dayCondForSymbol.isEmpty {
+                    return noaaSFSymbol(condition: dayCondForSymbol, isDay: isCurrentlyDay)
                         ?? wmoSFSymbol(code: wmoCode, isDay: isCurrentlyDay)
                 }
                 if !dayProse.isEmpty {
@@ -398,26 +443,35 @@ actor WeatherRepository {
             // rowNightSymbol: only shown in the 7-day row when conditions are
             // dramatically different — guards against cluttering routine clear→clear days.
             let nightIsSevere = conditionsAreNightSevere(day: dayCond, night: nightCond)
-            let rowNightSymbol: String? = nightIsSevere ? nightSymbolResolved : nil
             let condLabel = !dayCond.isEmpty ? dayCond : wmoDescription(code: wmoCode, isDay: true)
 
+            // Build ForecastBadge — only when no accumulation (accum takes the slot)
+            let badge: ForecastBadge? = accum.hasAccumulation ? nil
+                : extractForecastBadge(
+                    from: dayProse,
+                    dayCond: dayCond,
+                    nightSymbol: nightIsSevere ? nightSymbolResolved : nil,
+                    isNightSevere: nightIsSevere
+                  )
+
             days.append(DailyForecast(
-                id:               UUID(),
-                date:             date,
-                high:             resolvedHigh,
-                low:              resolvedLow,
+                id:                UUID(),
+                date:              date,
+                high:              resolvedHigh,
+                low:               resolvedLow,
                 precipProbability: noaaData?.precipChance ?? 0,
-                shortForecast:    extractConditionLabel(from: condLabel),
-                dayProse:         dayProse,
-                nightProse:       noaaData?.nightProse ?? "",
-                accumulation:     noaaData?.accumulation ?? .none,
-                precipType:       noaaData?.precipType ?? .none,
-                isNightSevere:    noaaData?.isNightSevere ?? false,
-                daySymbol:        daySymbol,
-                nightSymbol:      nightSymbol,
-                rowNightSymbol:   rowNightSymbol,
-                hourlyTemps:      allHourly.filter { cal.isDate($0.time, inSameDayAs: date) },
-                timeZoneIdentifier: tz.identifier
+                shortForecast:     extractConditionLabel(from: condLabel),
+                dayProse:          dayProse,
+                nightProse:        noaaData?.nightProse ?? "",
+                accumulation:      accum,
+                precipType:        noaaData?.precipType ?? .none,
+                isNightSevere:     nightIsSevere,
+                daySymbol:         daySymbol,
+                nightSymbol:       nightSymbol,
+                rowNightSymbol:    nil,
+                hourlyTemps:       allHourly.filter { cal.isDate($0.time, inSameDayAs: date) },
+                timeZoneIdentifier: tz.identifier,
+                forecastBadge:     badge
             ))
         }
 
@@ -446,19 +500,17 @@ actor NOAAScraper {
     static let shared = NOAAScraper()
 
     struct ScrapedPeriod {
-        let condition: String       // extracted display condition, e.g. "Partly Sunny"
+        let condition: String
         let dayProse: String
         let nightProse: String
-        let dayCondition: String    // tombstone condition for the day period
-        let nightCondition: String  // tombstone condition for the night period
+        let dayCondition: String
+        let nightCondition: String
         let accumulation: AccumulationRange
         let precipType: PrecipType
         let isNightSevere: Bool
         let precipChance: Int?
-        // Observed current conditions from the NOAA station block (today only).
-        // nil when the page has no current-conditions panel (future days, failed scrape).
-        let currentCondition: String?   // e.g. "Rain"
-        let currentTempF: Double?        // observed station temp in °F
+        let currentCondition: String?
+        let currentTempF: Double?
     }
 
     /* Fetches and parses the NOAA forecast page for the given coordinate.
@@ -593,15 +645,15 @@ actor NOAAScraper {
         for key in orderedKeys {
             guard let day = raw[key] else { continue }
             let combined = day.dayText + " " + day.nightText
-            // Attach the scraped station observation only to today's entry.
             let isToday = key == todayKey
+            let accum = extractAccumulationRange(from: day.dayText) + extractAccumulationRange(from: day.nightText)
             result[key] = ScrapedPeriod(
                 condition:        day.dayCondition.isEmpty ? day.dayLabel : day.dayCondition,
                 dayProse:         day.dayText,
                 nightProse:       day.nightText,
                 dayCondition:     day.dayCondition,
                 nightCondition:   day.nightCondition,
-                accumulation:     extractAccumulationRange(from: day.dayText) + extractAccumulationRange(from: day.nightText),
+                accumulation:     accum,
                 precipType:       PrecipType.from(dayCondition: day.dayCondition, nightCondition: day.nightCondition, prose: combined),
                 isNightSevere:    conditionsAreNightSevere(day: day.dayCondition, night: day.nightCondition),
                 precipChance:     day.precipChance,
@@ -630,63 +682,6 @@ actor NOAAScraper {
             if r.location != NSNotFound, let range = Range(r, in: text) { return Int(text[range]) }
         }
         return nil
-    }
-
-    /* Extracts an accumulation range from NOAA prose using ordered regex patterns.
-     * Only fires when snow/ice trigger words are present; returns .none otherwise.
-     *
-     * @param text  prose text for a single day or night period
-     * @return AccumulationRange with bounds in inches
-     */
-    private func extractAccumulationRange(from text: String) -> AccumulationRange {
-        let lower = text.lowercased()
-        let triggers = ["snow", "accumulation", "flurr", "blizzard", "wintry mix", "sleet"]
-        guard triggers.contains(where: { lower.contains($0) }) else { return .none }
-
-        // "Less than" English fraction phrases, most specific first
-        if ["less than a quarter", "under a quarter", "less than 0.25"].contains(where: { lower.contains($0) })          { return AccumulationRange(low: nil, high: 0.25) }
-        if ["less than a half", "less than half an", "under a half", "less than half inch", "less than 0.5", "under 0.5"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 0.5) }
-        if ["less than three quarter", "less than 0.75", "under three quarter"].contains(where: { lower.contains($0) })  { return AccumulationRange(low: nil, high: 0.75) }
-        if ["less than one inch", "less than an inch", "less than 1 inch", "under one inch", "under an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 1.0) }
-
-        if let hi = regexFirstCapture("(?:less than|under) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: nil, high: hi) }
-        if let hi = regexFirstCapture("up to ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)               { return AccumulationRange(low: nil, high: hi) }
-        if ["around an inch", "around one inch", "about an inch", "near an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: 1.0, high: 1.0) }
-        if let v = regexFirstCapture("(?:around|about|near) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
-
-        if let pair = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+to\\s+([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text, groups: 2) {
-            let parts = pair.components(separatedBy: "|")
-            if parts.count == 2, let lo = Double(parts[0]), let hi = Double(parts[1]) { return AccumulationRange(low: lo, high: hi) }
-        }
-
-        if let v = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
-        return .none
-    }
-
-    /* Returns the first regex capture group as a string, or all groups joined by "|" when groups > 1.
-     *
-     * @param pattern  NSRegularExpression pattern with capture groups
-     * @param text     input string
-     * @param groups   number of capture groups to return (default 1)
-     * @return captured string(s) or nil on no match
-     */
-    private func regexFirstCapture(_ pattern: String, in text: String, groups: Int = 1) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
-        else { return nil }
-
-        if groups == 1 {
-            let r = match.range(at: 1)
-            guard r.location != NSNotFound else { return nil }
-            return (text as NSString).substring(with: r)
-        }
-        var parts: [String] = []
-        for g in 1...groups {
-            let r = match.range(at: g)
-            guard r.location != NSNotFound else { return nil }
-            parts.append((text as NSString).substring(with: r))
-        }
-        return parts.joined(separator: "|")
     }
 }
 
@@ -1170,7 +1165,7 @@ nonisolated func wmoSFSymbol(code: Int, isDay: Bool) -> String {
     case 3:       return "cloud.fill"
     case 45, 48:  return "cloud.fog.fill"
     case 51...65: return "cloud.rain.fill"
-    case 71...77: return "cloud.snow.fill"
+    case 71...77: return "snowflake"
     case 80...82: return "cloud.heavyrain.fill"
     case 95...99: return "cloud.bolt.rain.fill"
     default:      return isDay ? "cloud.sun.fill"     : "cloud.moon.fill"
@@ -1181,4 +1176,61 @@ nonisolated func wmoSFSymbol(code: Int, isDay: Bool) -> String {
 nonisolated func compassDirection(from degrees: Double) -> String {
     let dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"]
     return dirs[Int((degrees + 11.25) / 22.5) % 16]
+}
+
+/* Extracts an accumulation range from NOAA prose using ordered regex patterns.
+ * Only fires when snow/ice trigger words are present; returns .none otherwise.
+ *
+ * @param text  prose text for a single day or night period
+ * @return AccumulationRange with bounds in inches
+ */
+nonisolated func extractAccumulationRange(from text: String) -> AccumulationRange {
+    let lower = text.lowercased()
+    let triggers = ["snow", "accumulation", "flurr", "blizzard", "wintry mix", "sleet"]
+    guard triggers.contains(where: { lower.contains($0) }) else { return .none }
+
+    // "Less than" English fraction phrases, most specific first
+    if ["less than a quarter", "under a quarter", "less than 0.25"].contains(where: { lower.contains($0) })          { return AccumulationRange(low: nil, high: 0.25) }
+    if ["less than a half", "less than half an", "under a half", "less than half inch", "less than 0.5", "under 0.5"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 0.5) }
+    if ["less than three quarter", "less than 0.75", "under three quarter"].contains(where: { lower.contains($0) })  { return AccumulationRange(low: nil, high: 0.75) }
+    if ["less than one inch", "less than an inch", "less than 1 inch", "under one inch", "under an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: nil, high: 1.0) }
+
+    if let hi = regexFirstCapture("(?:less than|under) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: nil, high: hi) }
+    if let hi = regexFirstCapture("up to ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init)               { return AccumulationRange(low: nil, high: hi) }
+    if ["around an inch", "around one inch", "about an inch", "near an inch"].contains(where: { lower.contains($0) }) { return AccumulationRange(low: 1.0, high: 1.0) }
+    if let v = regexFirstCapture("(?:around|about|near) ([0-9]+(?:\\.[0-9]+)?) inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
+
+    if let pair = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+to\\s+([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text, groups: 2) {
+        let parts = pair.components(separatedBy: "|")
+        if parts.count == 2, let lo = Double(parts[0]), let hi = Double(parts[1]) { return AccumulationRange(low: lo, high: hi) }
+    }
+
+    if let v = regexFirstCapture("([0-9]+(?:\\.[0-9]+)?)\\s+inch", in: text).flatMap(Double.init) { return AccumulationRange(low: v, high: v) }
+    return .none
+}
+
+/* Returns the first regex capture group as a string, or all groups joined by "|" when groups > 1.
+ *
+ * @param pattern  NSRegularExpression pattern with capture groups
+ * @param text     input string
+ * @param groups   number of capture groups to return (default 1)
+ * @return captured string(s) or nil on no match
+ */
+nonisolated func regexFirstCapture(_ pattern: String, in text: String, groups: Int = 1) -> String? {
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+          let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
+    else { return nil }
+
+    if groups == 1 {
+        let r = match.range(at: 1)
+        guard r.location != NSNotFound else { return nil }
+        return (text as NSString).substring(with: r)
+    }
+    var parts: [String] = []
+    for g in 1...groups {
+        let r = match.range(at: g)
+        guard r.location != NSNotFound else { return nil }
+        parts.append((text as NSString).substring(with: r))
+    }
+    return parts.joined(separator: "|")
 }
